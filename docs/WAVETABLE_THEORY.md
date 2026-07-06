@@ -27,35 +27,53 @@ The **frequency slider** in the browser GUI directly sets this value: dragging i
 
 ---
 
-## Cubic Interpolation (Catmull-Rom)
+## Windowed-Sinc Interpolation
 
-The table has 2048 entries, but the read position `pos` is a float. Truncating to an integer creates audible stepping artifacts. The oscillator uses **4-point Catmull-Rom** interpolation to reconstruct the continuous waveform:
+The table has 2048 entries, but the read position `pos` is a float. The oscillator uses an **8-tap Blackman-windowed sinc** kernel to reconstruct the continuous waveform — the theoretically ideal approach for a band-limited signal.
+
+### The kernel
+
+The sinc function `sin(π·x) / (π·x)` is the perfect reconstruction filter: it evaluates to 1 at `x = 0` and exactly 0 at every other integer, so adjacent samples do not bleed into one another. Alone it has infinite extent; the Blackman window truncates it to `2·L` samples while minimising side-lobe energy:
 
 ```rust
-let i1  = pos as usize % TABLE_SIZE;
-let im1 = (i1 + TABLE_SIZE - 1) % TABLE_SIZE; // i − 1
-let i2  = (i1 + 1) % TABLE_SIZE;              // i + 1
-let i3  = (i1 + 2) % TABLE_SIZE;              // i + 2
-let t   = pos.fract();
-let (p0, p1, p2, p3) = (table[im1], table[i1], table[i2], table[i3]);
-let s = p1 + 0.5*t*(p2-p0 + t*(2.0*p0 - 5.0*p1 + 4.0*p2 - p3
-                              + t*(3.0*(p1-p2) + p3 - p0)));
+const SINC_L: isize = 4; // 4 samples each side → 8 taps total
+
+fn sinc_kernel(x: f32) -> f32 {
+    if x.abs() < 1e-6 { return 1.0; }
+    let pix = PI * x;
+    let window = 0.42 + 0.5 * (PI * x / SINC_L as f32).cos()
+                      + 0.08 * (2.0 * PI * x / SINC_L as f32).cos();
+    pix.sin() / pix * window
+}
 ```
 
-All four indices wrap modulo `TABLE_SIZE` so the table is treated as a circular buffer — the interpolation is seamless across the loop point.
+The Blackman window reaches exactly 0 at `|x| = L`, so the first and last taps fade cleanly to zero.
 
-### Why cubic over linear
+### How it is applied in `tick()`
 
-| Method | Points | Continuity | HF rolloff |
-| ------ | ------ | ---------- | ---------- |
-| Truncate | 1 | C−1 (discontinuous) | None — aliasing instead |
-| Linear | 2 | C0 (value matches) | ~−6 dB/oct above TABLE_SIZE/2 |
-| Catmull-Rom | 4 | C1 (value + slope match) | Much less — correct at high pitches |
-| Sinc | N | C∞ (ideal) | Zero — computationally expensive |
+```rust
+let i0 = pos as usize % TABLE_SIZE;
+let t  = pos.fract();            // fractional position within [i0, i0+1)
 
-C1 continuity means slopes match at every sample boundary, not just values. For wavetables this matters most at high pitches where only a few table samples are read per output sample — linear lerp rounds off the waveform, Catmull-Rom preserves it.
+let mut s = 0.0f32;
+for k in (-(SINC_L - 1))..=SINC_L {   // k = −3 … +4  (8 taps)
+    let idx = ((i0 as isize + k).rem_euclid(TABLE_SIZE as isize)) as usize;
+    s += table[idx] * sinc_kernel(t - k as f32);
+}
+```
 
-The formula evaluates in Horner form (3 multiplies per nesting level) — no extra cost compared to a naïve cubic polynomial.
+All indices wrap via `rem_euclid` so the table is treated as a circular buffer — the interpolation is seamless across the loop point.
+
+### Comparison of interpolation methods
+
+| Method | Taps | Continuity | HF accuracy | Cost per sample |
+| ------ | ---- | ---------- | ----------- | --------------- |
+| Truncate | 1 | C−1 (discontinuous) | Poor — steps alias | 0 extra ops |
+| Linear | 2 | C0 (value only) | ~−6 dB/oct rolloff | 1 multiply |
+| Catmull-Rom | 4 | C1 (value + slope) | Good at mid pitches | 4 multiplies |
+| Blackman-sinc (8-tap) | 8 | C∞ (ideal band-limit) | Excellent at all pitches | 8 `sin()` calls |
+
+The sinc approach is more expensive — each `tick()` calls `sin()` eight times instead of none. With 8 polyphonic voices that is 64 `sin()` calls per audio sample. On modern hardware this is still well within the real-time budget at 44100 Hz, but a production synth would replace the per-sample `sin()` calls with a pre-computed sinc look-up table for further speed.
 
 ---
 
@@ -214,7 +232,7 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 ## Where to Go Next
 
 1. **Multi-table mip-mapping** — generate one table per octave with harmonics capped at Nyquist for that octave, select the right table in `set_freq`.
-2. **Sinc interpolation** — the theoretically ideal reconstructor; practical implementations window the sinc kernel (e.g. 8-point Kaiser-windowed) for a good quality/cost trade-off.
+2. **Sinc look-up table** — pre-compute the `sinc_kernel` values into a table indexed by fractional position; replaces 8 `sin()` calls per sample with 8 table lookups for a significant speed-up at no quality cost.
 3. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution.
 4. **Unison / detune** — run two or more oscillators per voice with slight pitch offsets and mix them, classic for fat synth sounds.
 5. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.

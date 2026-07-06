@@ -1,6 +1,18 @@
 use crate::wavetable;
+use std::f32::consts::PI;
 
 pub const WAVEFORMS: [&str; 8] = ["Sine", "Saw", "Square", "Triangle", "Pulse", "Organ", "Additive", "Custom"];
+
+// 8-tap Blackman-windowed sinc: 4 samples on each side of the interpolation point.
+const SINC_L: isize = 4;
+
+fn sinc_kernel(x: f32) -> f32 {
+    if x.abs() < 1e-6 { return 1.0; }
+    let pix = PI * x;
+    let window = 0.42 + 0.5 * (PI * x / SINC_L as f32).cos()
+                      + 0.08 * (2.0 * PI * x / SINC_L as f32).cos();
+    pix.sin() / pix * window
+}
 
 pub struct Oscillator {
     tables: Vec<Vec<f32>>,
@@ -56,14 +68,15 @@ impl Oscillator {
         let table = &self.tables[self.active];
         let n = wavetable::TABLE_SIZE;
         let pos = self.phase * n as f32;
-        let i1 = pos as usize % n;
-        let im1 = (i1 + n - 1) % n;
-        let i2 = (i1 + 1) % n;
-        let i3 = (i1 + 2) % n;
+        let i0 = pos as usize % n;
         let t = pos.fract();
-        let (p0, p1, p2, p3) = (table[im1], table[i1], table[i2], table[i3]);
-        // Catmull-Rom cubic: C1-continuous, no overshoot on sine-like shapes
-        let s = p1 + 0.5 * t * (p2 - p0 + t * (2.0*p0 - 5.0*p1 + 4.0*p2 - p3 + t * (3.0*(p1-p2) + p3 - p0)));
+
+        let mut s = 0.0f32;
+        for k in (-(SINC_L - 1))..=SINC_L {
+            let idx = ((i0 as isize + k).rem_euclid(n as isize)) as usize;
+            s += table[idx] * sinc_kernel(t - k as f32);
+        }
+
         self.phase = (self.phase + self.phase_inc) % 1.0;
         s
     }
