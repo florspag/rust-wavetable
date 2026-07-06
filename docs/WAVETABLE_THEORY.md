@@ -49,20 +49,45 @@ fn sinc_kernel(x: f32) -> f32 {
 
 The Blackman window reaches exactly 0 at `|x| = L`, so the first and last taps fade cleanly to zero.
 
-### How it is applied in `tick()`
+### Pre-computed look-up table
+
+Calling `sin()` eight times per audio sample (× 8 voices = 64 calls per sample) is wasteful because the kernel shape only depends on the fractional position `t ∈ [0, 1)`. The kernel is pre-computed once at startup into a global table keyed by a quantized `t`:
 
 ```rust
-let i0 = pos as usize % TABLE_SIZE;
-let t  = pos.fract();            // fractional position within [i0, i0+1)
+const SINC_TABLE_SIZE: usize = 512;    // fractional subdivisions
+static SINC_TABLE: OnceLock<Vec<[f32; SINC_TAPS]>> = OnceLock::new();
 
-let mut s = 0.0f32;
-for k in (-(SINC_L - 1))..=SINC_L {   // k = −3 … +4  (8 taps)
-    let idx = ((i0 as isize + k).rem_euclid(TABLE_SIZE as isize)) as usize;
-    s += table[idx] * sinc_kernel(t - k as f32);
+fn build_sinc_table() -> Vec<[f32; SINC_TAPS]> {
+    (0..SINC_TABLE_SIZE).map(|qi| {
+        let t = qi as f32 / SINC_TABLE_SIZE as f32;
+        let mut weights = [0.0f32; SINC_TAPS];
+        for (j, k) in (-(SINC_L - 1)..=SINC_L).enumerate() {
+            weights[j] = sinc_kernel(t - k as f32);
+        }
+        weights
+    }).collect()
 }
 ```
 
-All indices wrap via `rem_euclid` so the table is treated as a circular buffer — the interpolation is seamless across the loop point.
+512 entries × 8 weights × 4 bytes = **16 KB** — fits in L1 cache. `OnceLock` ensures the table is built exactly once and shared across all 8 voices.
+
+### How `tick()` uses it
+
+```rust
+let i0 = pos as usize % TABLE_SIZE;
+let t  = pos.fract();
+
+// quantize t → row index, fetch pre-computed 8 weights
+let weights = &SINC_TABLE[(t * SINC_TABLE_SIZE as f32) as usize];
+
+let mut s = 0.0f32;
+for (j, k) in (-(SINC_L - 1)..=SINC_L).enumerate() {  // k = −3 … +4
+    let idx = ((i0 as isize + k).rem_euclid(TABLE_SIZE as isize)) as usize;
+    s += table[idx] * weights[j];
+}
+```
+
+All indices wrap via `rem_euclid` so the circular table boundary is seamless. The inner loop is now 8 multiplies + 8 adds — no transcendental functions at audio rate.
 
 ### Comparison of interpolation methods
 
@@ -70,10 +95,8 @@ All indices wrap via `rem_euclid` so the table is treated as a circular buffer �
 | ------ | ---- | ---------- | ----------- | --------------- |
 | Truncate | 1 | C−1 (discontinuous) | Poor — steps alias | 0 extra ops |
 | Linear | 2 | C0 (value only) | ~−6 dB/oct rolloff | 1 multiply |
-| Catmull-Rom | 4 | C1 (value + slope) | Good at mid pitches | 4 multiplies |
-| Blackman-sinc (8-tap) | 8 | C∞ (ideal band-limit) | Excellent at all pitches | 8 `sin()` calls |
-
-The sinc approach is more expensive — each `tick()` calls `sin()` eight times instead of none. With 8 polyphonic voices that is 64 `sin()` calls per audio sample. On modern hardware this is still well within the real-time budget at 44100 Hz, but a production synth would replace the per-sample `sin()` calls with a pre-computed sinc look-up table for further speed.
+| Catmull-Rom | 4 | C1 (value + slope) | Good at mid pitches | 4 multiplies, no trig |
+| Blackman-sinc + LUT | 8 | C∞ (ideal band-limit) | Excellent at all pitches | 8 multiplies, no trig |
 
 ---
 
@@ -232,7 +255,7 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 ## Where to Go Next
 
 1. **Multi-table mip-mapping** — generate one table per octave with harmonics capped at Nyquist for that octave, select the right table in `set_freq`.
-2. **Sinc look-up table** — pre-compute the `sinc_kernel` values into a table indexed by fractional position; replaces 8 `sin()` calls per sample with 8 table lookups for a significant speed-up at no quality cost.
+2. **Linear interpolation of LUT rows** — instead of snapping `t` to the nearest row in `SINC_TABLE`, linearly interpolate between two adjacent rows; removes the small quantisation error introduced by the 512-step table.
 3. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution.
 4. **Unison / detune** — run two or more oscillators per voice with slight pitch offsets and mix them, classic for fat synth sounds.
 5. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.

@@ -1,10 +1,14 @@
 use crate::wavetable;
 use std::f32::consts::PI;
+use std::sync::OnceLock;
 
 pub const WAVEFORMS: [&str; 8] = ["Sine", "Saw", "Square", "Triangle", "Pulse", "Organ", "Additive", "Custom"];
 
-// 8-tap Blackman-windowed sinc: 4 samples on each side of the interpolation point.
-const SINC_L: isize = 4;
+const SINC_L: isize = 4;                              // taps on each side
+const SINC_TAPS: usize = (SINC_L * 2) as usize;      // 8 total
+const SINC_TABLE_SIZE: usize = 512;                   // fractional subdivisions
+
+static SINC_TABLE: OnceLock<Vec<[f32; SINC_TAPS]>> = OnceLock::new();
 
 fn sinc_kernel(x: f32) -> f32 {
     if x.abs() < 1e-6 { return 1.0; }
@@ -12,6 +16,17 @@ fn sinc_kernel(x: f32) -> f32 {
     let window = 0.42 + 0.5 * (PI * x / SINC_L as f32).cos()
                       + 0.08 * (2.0 * PI * x / SINC_L as f32).cos();
     pix.sin() / pix * window
+}
+
+fn build_sinc_table() -> Vec<[f32; SINC_TAPS]> {
+    (0..SINC_TABLE_SIZE).map(|qi| {
+        let t = qi as f32 / SINC_TABLE_SIZE as f32;
+        let mut weights = [0.0f32; SINC_TAPS];
+        for (j, k) in (-(SINC_L - 1)..=SINC_L).enumerate() {
+            weights[j] = sinc_kernel(t - k as f32);
+        }
+        weights
+    }).collect()
 }
 
 pub struct Oscillator {
@@ -23,6 +38,7 @@ pub struct Oscillator {
 
 impl Oscillator {
     pub fn new() -> Self {
+        SINC_TABLE.get_or_init(build_sinc_table); // warm on first voice, shared by all
         let mut tables: Vec<Vec<f32>> = (0..7).map(wavetable::build_wavetable).collect();
         tables.push(vec![0.0; wavetable::TABLE_SIZE]); // slot 7: custom
         Self {
@@ -71,10 +87,13 @@ impl Oscillator {
         let i0 = pos as usize % n;
         let t = pos.fract();
 
+        let weights = &SINC_TABLE.get_or_init(build_sinc_table)
+            [(t * SINC_TABLE_SIZE as f32) as usize];
+
         let mut s = 0.0f32;
-        for k in (-(SINC_L - 1))..=SINC_L {
+        for (j, k) in (-(SINC_L - 1)..=SINC_L).enumerate() {
             let idx = ((i0 as isize + k).rem_euclid(n as isize)) as usize;
-            s += table[idx] * sinc_kernel(t - k as f32);
+            s += table[idx] * weights[j];
         }
 
         self.phase = (self.phase + self.phase_inc) % 1.0;
