@@ -27,22 +27,35 @@ The **frequency slider** in the browser GUI directly sets this value: dragging i
 
 ---
 
-## Linear Interpolation
+## Cubic Interpolation (Catmull-Rom)
 
-The table has 2048 entries, but `pos` is a float. Truncating to an integer creates audible stepping artifacts. Linear interpolation fixes this:
+The table has 2048 entries, but the read position `pos` is a float. Truncating to an integer creates audible stepping artifacts. The oscillator uses **4-point Catmull-Rom** interpolation to reconstruct the continuous waveform:
 
 ```rust
-let i0 = pos as usize % TABLE_SIZE;
-let i1 = (i0 + 1) % TABLE_SIZE;
-let frac = pos.fract();
-let s = table[i0] + frac * (table[i1] - table[i0]);
+let i1  = pos as usize % TABLE_SIZE;
+let im1 = (i1 + TABLE_SIZE - 1) % TABLE_SIZE; // i − 1
+let i2  = (i1 + 1) % TABLE_SIZE;              // i + 1
+let i3  = (i1 + 2) % TABLE_SIZE;              // i + 2
+let t   = pos.fract();
+let (p0, p1, p2, p3) = (table[im1], table[i1], table[i2], table[i3]);
+let s = p1 + 0.5*t*(p2-p0 + t*(2.0*p0 - 5.0*p1 + 4.0*p2 - p3
+                              + t*(3.0*(p1-p2) + p3 - p0)));
 ```
 
-`frac` is how far between `i0` and `i1` the true position is. This smooths the output at the cost of slight high-frequency rolloff.
+All four indices wrap modulo `TABLE_SIZE` so the table is treated as a circular buffer — the interpolation is seamless across the loop point.
 
-Higher-quality alternatives:
-- **Cubic (Hermite/Catmull-Rom)** — 4-point, less HF rolloff
-- **Sinc interpolation** — theoretically ideal, computationally expensive
+### Why cubic over linear
+
+| Method | Points | Continuity | HF rolloff |
+| ------ | ------ | ---------- | ---------- |
+| Truncate | 1 | C−1 (discontinuous) | None — aliasing instead |
+| Linear | 2 | C0 (value matches) | ~−6 dB/oct above TABLE_SIZE/2 |
+| Catmull-Rom | 4 | C1 (value + slope match) | Much less — correct at high pitches |
+| Sinc | N | C∞ (ideal) | Zero — computationally expensive |
+
+C1 continuity means slopes match at every sample boundary, not just values. For wavetables this matters most at high pitches where only a few table samples are read per output sample — linear lerp rounds off the waveform, Catmull-Rom preserves it.
+
+The formula evaluates in Horner form (3 multiplies per nesting level) — no extra cost compared to a naïve cubic polynomial.
 
 ---
 
@@ -201,7 +214,7 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 ## Where to Go Next
 
 1. **Multi-table mip-mapping** — generate one table per octave with harmonics capped at Nyquist for that octave, select the right table in `set_freq`.
-2. **Cubic interpolation** — replace the linear lerp with 4-point Hermite for better HF accuracy.
+2. **Sinc interpolation** — the theoretically ideal reconstructor; practical implementations window the sinc kernel (e.g. 8-point Kaiser-windowed) for a good quality/cost trade-off.
 3. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution.
 4. **Unison / detune** — run two or more oscillators per voice with slight pitch offsets and mix them, classic for fat synth sounds.
 5. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.

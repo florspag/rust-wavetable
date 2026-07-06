@@ -54,11 +54,16 @@ impl Oscillator {
 
     pub fn tick(&mut self) -> f32 {
         let table = &self.tables[self.active];
-        let pos = self.phase * wavetable::TABLE_SIZE as f32;
-        let i0 = pos as usize % wavetable::TABLE_SIZE;
-        let i1 = (i0 + 1) % wavetable::TABLE_SIZE;
-        let frac = pos.fract();
-        let s = table[i0] + frac * (table[i1] - table[i0]);
+        let n = wavetable::TABLE_SIZE;
+        let pos = self.phase * n as f32;
+        let i1 = pos as usize % n;
+        let im1 = (i1 + n - 1) % n;
+        let i2 = (i1 + 1) % n;
+        let i3 = (i1 + 2) % n;
+        let t = pos.fract();
+        let (p0, p1, p2, p3) = (table[im1], table[i1], table[i2], table[i3]);
+        // Catmull-Rom cubic: C1-continuous, no overshoot on sine-like shapes
+        let s = p1 + 0.5 * t * (p2 - p0 + t * (2.0*p0 - 5.0*p1 + 4.0*p2 - p3 + t * (3.0*(p1-p2) + p3 - p0)));
         self.phase = (self.phase + self.phase_inc) % 1.0;
         s
     }
