@@ -612,49 +612,48 @@
     }
 
     // ── Key interaction ─────────────────────────────────────────────────
-    let activeNote = null;
+    const activeNotes = new Set();        // all currently held MIDI notes
+    const pointerToNote = new Map();      // pointerId → midi (multi-touch)
 
     function noteOn(midi) {
       startAudio().then(() => {
         if (!synth) return;
-        activeNote = midi;
+        activeNotes.add(midi);
         const freq = midiFreq(midi);
         synth.note_on(freq);
         isPlaying = true;
         currentFreq = freq;
         syncSliderToFreq(freq);
         noteDisplay.textContent = `${midiName(midi)}  ·  ${freq.toFixed(1)} Hz`;
-        document.querySelectorAll('[data-midi]').forEach(el => {
-          el.classList.toggle('active', parseInt(el.dataset.midi) === midi);
-        });
+        document.querySelectorAll(`[data-midi="${midi}"]`).forEach(el => el.classList.add('active'));
       });
     }
 
     function noteOff(midi) {
-      if (activeNote !== midi) return;
-      if (synth) { synth.note_off(); isPlaying = false; }
-      activeNote = null;
-      noteDisplay.textContent = '';
-      document.querySelectorAll('[data-midi]').forEach(el => el.classList.remove('active'));
+      if (!activeNotes.has(midi)) return;
+      activeNotes.delete(midi);
+      if (synth) synth.note_off(midiFreq(midi));
+      if (activeNotes.size === 0) { isPlaying = false; noteDisplay.textContent = ''; }
+      document.querySelectorAll(`[data-midi="${midi}"]`).forEach(el => el.classList.remove('active'));
     }
 
-    // Piano mouse events
+    // Piano pointer events — setPointerCapture handles multi-touch correctly
     pianoEl.addEventListener('pointerdown', e => {
       const key = e.target.closest('[data-midi]');
       if (!key) return;
       e.preventDefault();
       key.setPointerCapture(e.pointerId);
-      noteOn(parseInt(key.dataset.midi));
+      const midi = parseInt(key.dataset.midi);
+      pointerToNote.set(e.pointerId, midi);
+      noteOn(midi);
     });
 
-    pianoEl.addEventListener('pointerup', e => {
-      const key = e.target.closest('[data-midi]');
-      if (key) noteOff(parseInt(key.dataset.midi));
-    });
-
-    pianoEl.addEventListener('pointerleave', () => {
-      if (activeNote !== null) noteOff(activeNote);
-    });
+    const releasePointer = e => {
+      const midi = pointerToNote.get(e.pointerId);
+      if (midi !== undefined) { noteOff(midi); pointerToNote.delete(e.pointerId); }
+    };
+    pianoEl.addEventListener('pointerup', releasePointer);
+    pianoEl.addEventListener('pointercancel', releasePointer);
 
     // Keyboard events
     document.addEventListener('keydown', e => {

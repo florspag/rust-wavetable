@@ -62,16 +62,32 @@ Common techniques: **BLIT** (Bandlimited Impulse Train), **BLEP** (Bandlimited S
 
 ---
 
-## The 4 Waveforms
+## Waveforms
 
-| `kind` | Waveform | Formula | Harmonic content |
-|--------|----------|---------|-----------------|
-| `0` | Sine | `sin(2π·t)` | Fundamental only |
-| `1` | Sawtooth | `2t − 1` | All harmonics: `1/n` amplitude |
-| `2` | Square | `±1` at 50% duty | Odd harmonics: `1/n` amplitude |
-| `3` | Triangle | `1 − 4·|t − 0.5|` | Odd harmonics: `1/n²` amplitude |
+Seven built-in tables are generated at startup; an eighth slot holds a user-drawn custom table.
 
-Triangle falls off as `1/n²` instead of `1/n`, so it aliases far less than saw or square — heard as a rounder, mellower tone.
+| `kind` | Name | Formula / method | Character |
+| ------ | ---- | ---------------- | --------- |
+| `0` | Sine | `sin(2π·t)` | Pure tone, fundamental only |
+| `1` | Sawtooth | `2t − 1` | All harmonics `1/n` — bright, buzzy |
+| `2` | Square | `±1` at 50% duty | Odd harmonics `1/n` — hollow, reedy |
+| `3` | Triangle | `1 − 4·\|t − 0.5\|` | Odd harmonics `1/n²` — soft, flute-like |
+| `4` | Pulse | `±1` at 25% duty | Odd + even harmonics — thin, nasal |
+| `5` | Organ | Sum of harmonics 1–4 with `½, ¼, ⅛` weights | Warm, Hammond-style |
+| `6` | Additive | Three odd harmonics: `sin + sin(3f)/3 + sin(5f)/5` | Bandlimited square approximation |
+| `7` | Custom | User-drawn in the browser, resampled to 2048 samples | Anything |
+
+Triangle falls off as `1/n²` so it aliases far less than saw or square. The Additive waveform pre-sums a few harmonics in the table — same principle as the bandlimited techniques below, just applied once at build time rather than per-pitch.
+
+### Custom wavetable
+
+The browser GUI provides a draw canvas (shown when **Custom** is selected). The user drags to sculpt one full cycle; on release the browser resamples the drawing to 2048 `Float32` samples and sends them to the WASM synth via:
+
+```
+JS Float32Array  →  wasm-bindgen  →  &[f32]  →  resample to TABLE_SIZE  →  tables[7]
+```
+
+The Rust side resamples the input to exactly TABLE_SIZE entries using the same linear interpolation used during playback, so any input length works.
 
 ---
 
@@ -126,23 +142,58 @@ y[n] = b0·x[n] + b1·x[n−1] + b2·x[n−2] − a1·y[n−1] − a2·y[n−2]
 
 ---
 
+## Polyphony and Voice Management
+
+The synth maintains **8 voices** running in parallel. Each voice owns its own `Oscillator` and `Adsr`; the `Filter` is shared and applied to the final mix.
+
+### Voice allocation
+
+When a note is played:
+
+1. If any voice is silent (envelope inactive), use it.
+2. Otherwise **steal** the oldest voice — the one with the lowest `age` counter. The age counter increments on every `note_on`, so the voice that has been playing longest is always the steal candidate.
+
+```rust
+let idx = voices.iter().position(|v| !v.env.is_active())
+    .unwrap_or_else(|| voices.iter().enumerate()
+        .min_by_key(|(_, v)| v.age).map(|(i, _)| i).unwrap());
+```
+
+### note_off matching
+
+`note_off(freq)` finds all voices whose frequency is within ±1 Hz of the released note, then releases the **most recently triggered** one (`max_by_key(age)`). This handles the common case where the same key is re-pressed before it finishes releasing — the older, decaying instance is left to tail out naturally.
+
+### Soft clipping
+
+With 8 voices simultaneously active, the raw sum can exceed ±1.0. A `tanh` limiter is applied after mixing:
+
+```
+mixed = tanh(sum × 0.3)
+```
+
+The `0.3` scale factor means a single voice (`0.3 × 1.0 = 0.3`) passes through almost linearly (`tanh(0.3) ≈ 0.291`), while 8 voices in phase (`tanh(2.4) ≈ 0.984`) saturate gracefully instead of clipping hard.
+
+---
+
 ## Signal Flow
 
 ```
-Piano key OR frequency slider → frequency (Hz)
-            ↓
-  note_on: set_freq() resets phase + triggers envelope
-  slider:  change_freq() updates phase_inc only (no click, no retrigger)
-            ↓
-  tick() — called once per audio sample
-            ↓
-  phase → table index → linear interpolation → raw sample
-            ↓
-  biquad filter → cutoff / resonance / LP-HP-BP shaping
-            ↓
-  ADSR envelope → amplitude × filtered sample × 0.3
-            ↓
-  ScriptProcessorNode / cpal → speakers
+Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(freq)
+                        ↓                                           ↓
+               Voice[0..8] allocated or stolen          updates phase_inc only
+               each voice: Oscillator + Adsr                  (no phase reset,
+                        ↓                                      no click)
+  per-voice tick():
+    phase → table lookup → linear interp → raw sample
+    raw sample × ADSR envelope level
+                        ↓
+       sum all 8 voices
+                        ↓
+    tanh(sum × 0.3)   ← soft clip / normalise
+                        ↓
+    biquad filter (LP / HP / BP, cutoff, Q)
+                        ↓
+    ScriptProcessorNode / AudioWorklet → speakers
 ```
 
 ---
@@ -152,5 +203,5 @@ Piano key OR frequency slider → frequency (Hz)
 1. **Multi-table mip-mapping** — generate one table per octave with harmonics capped at Nyquist for that octave, select the right table in `set_freq`.
 2. **Cubic interpolation** — replace the linear lerp with 4-point Hermite for better HF accuracy.
 3. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution.
-4. **Unison / detune** — run multiple oscillators with slight pitch offsets and mix them, classic for fat synth sounds.
-5. **Custom wavetable loading** — import single-cycle waveforms from `.wav` files to extend beyond the 4 built-in shapes.
+4. **Unison / detune** — run two or more oscillators per voice with slight pitch offsets and mix them, classic for fat synth sounds.
+5. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.
