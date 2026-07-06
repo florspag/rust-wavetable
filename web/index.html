@@ -93,6 +93,65 @@
       background: #11111b;
     }
 
+    /* Filter panel */
+    .flt-row {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+    }
+
+    .flt-type-btn {
+      width: 3.4rem;
+      height: 3.4rem;
+      background: #1e1e2e;
+      border: 2px solid #45475a;
+      border-radius: 50%;
+      color: #cba6f7;
+      font-family: 'Courier New', monospace;
+      font-size: 0.85rem;
+      font-weight: bold;
+      cursor: pointer;
+      letter-spacing: 0.05em;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      flex-shrink: 0;
+    }
+
+    .flt-type-btn:hover {
+      border-color: #cba6f7;
+      box-shadow: 0 0 10px #cba6f744;
+    }
+
+    .flt-knobs {
+      display: flex;
+      gap: 2rem;
+    }
+
+    .knob-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.2rem;
+    }
+
+    .knob-canvas {
+      width: 54px;
+      height: 54px;
+      cursor: ns-resize;
+      display: block;
+    }
+
+    .knob-label {
+      font-size: 0.6rem;
+      color: #585b70;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .knob-val {
+      font-size: 0.68rem;
+      color: #cba6f7;
+    }
+
     /* Frequency panel */
     .freq-row {
       display: flex;
@@ -293,6 +352,28 @@
         <button class="wf-btn"        data-idx="3">Triangle</button>
       </div>
       <canvas id="scope"></canvas>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Filter</div>
+    <div class="flt-row">
+      <div class="knob-wrap">
+        <button class="flt-type-btn" id="flt-type">LP</button>
+        <span class="knob-label">Type</span>
+      </div>
+      <div class="flt-knobs">
+        <div class="knob-wrap">
+          <canvas class="knob-canvas" id="flt-cutoff-knob"></canvas>
+          <span class="knob-label">Cutoff</span>
+          <span class="knob-val" id="flt-cutoff-val">20 kHz</span>
+        </div>
+        <div class="knob-wrap">
+          <canvas class="knob-canvas" id="flt-res-knob"></canvas>
+          <span class="knob-label">Resonance</span>
+          <span class="knob-val" id="flt-res-val">0.71</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -843,6 +924,118 @@
     // Initial draw + redraw on resize
     drawADSR();
     new ResizeObserver(drawADSR).observe(adsrCanvas);
+
+    // ── Knob (canvas-based rotary control, drag up to increase) ─────────
+    class Knob {
+      constructor(canvas, { min, max, value, color = '#89b4fa', log = false, onChange = () => {} }) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.min = min; this.max = max;
+        this.color = color; this.log = log; this.onChange = onChange;
+        this._norm = this._toNorm(value ?? min);
+        this._drag = false; this._lastY = 0;
+        this._bind(); this.draw();
+      }
+
+      _toNorm(v) {
+        return this.log
+          ? Math.log(v / this.min) / Math.log(this.max / this.min)
+          : (v - this.min) / (this.max - this.min);
+      }
+
+      _fromNorm(n) {
+        return this.log
+          ? this.min * Math.pow(this.max / this.min, n)
+          : this.min + n * (this.max - this.min);
+      }
+
+      get value() { return this._fromNorm(this._norm); }
+
+      draw() {
+        const c = this.canvas;
+        const S = c.offsetWidth || 54;
+        const dpr = window.devicePixelRatio || 1;
+        if (c.width !== S * dpr) { c.width = c.height = S * dpr; this.ctx.scale(dpr, dpr); }
+        const ctx = this.ctx, cx = S / 2, cy = S / 2, R = S / 2 - 5;
+        const START = 0.75 * Math.PI, RANGE = 1.5 * Math.PI;
+        const cur = START + this._norm * RANGE;
+        ctx.clearRect(0, 0, S, S);
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, START, START + RANGE);
+        ctx.strokeStyle = '#313244'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, START, cur);
+        ctx.strokeStyle = this.color; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, R - 5, 0, Math.PI * 2);
+        ctx.fillStyle = '#181825'; ctx.fill();
+        ctx.strokeStyle = '#45475a'; ctx.lineWidth = 1; ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(cx + (R - 3) * Math.cos(cur), cy + (R - 3) * Math.sin(cur), 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = this.color; ctx.fill();
+      }
+
+      _move(dy) {
+        this._norm = Math.max(0, Math.min(1, this._norm - dy / 180));
+        this.draw(); this.onChange(this.value);
+      }
+
+      _bind() {
+        this.canvas.addEventListener('mousedown', e => {
+          this._drag = true; this._lastY = e.clientY; e.preventDefault();
+        });
+        window.addEventListener('mousemove', e => {
+          if (!this._drag) return;
+          this._move(e.clientY - this._lastY); this._lastY = e.clientY;
+        });
+        window.addEventListener('mouseup', () => { this._drag = false; });
+
+        this.canvas.addEventListener('touchstart', e => {
+          this._drag = true; this._lastY = e.touches[0].clientY; e.preventDefault();
+        }, { passive: false });
+        window.addEventListener('touchmove', e => {
+          if (!this._drag) return;
+          e.preventDefault(); this._move(e.touches[0].clientY - this._lastY); this._lastY = e.touches[0].clientY;
+        }, { passive: false });
+        window.addEventListener('touchend', () => { this._drag = false; });
+      }
+    }
+
+    // ── Filter ──────────────────────────────────────────────────────────
+    function fmtCutoff(hz) {
+      return hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : Math.round(hz) + ' Hz';
+    }
+
+    const fltTypes = ['LP', 'HP', 'BP'];
+    let fltTypeIdx = 0;
+    const fltTypeBtn = document.getElementById('flt-type');
+    fltTypeBtn.addEventListener('click', () => {
+      fltTypeIdx = (fltTypeIdx + 1) % 3;
+      fltTypeBtn.textContent = fltTypes[fltTypeIdx];
+      if (synth) synth.set_filter_type(fltTypeIdx);
+    });
+
+    const cutoffKnob = new Knob(document.getElementById('flt-cutoff-knob'), {
+      min: 20, max: 20000, value: 20000, color: '#cba6f7', log: true,
+      onChange: hz => {
+        document.getElementById('flt-cutoff-val').textContent = fmtCutoff(hz);
+        if (synth) synth.set_filter_cutoff(hz);
+      },
+    });
+    document.getElementById('flt-cutoff-val').textContent = fmtCutoff(cutoffKnob.value);
+
+    const resKnob = new Knob(document.getElementById('flt-res-knob'), {
+      min: 0.1, max: 20, value: 0.707, color: '#cba6f7',
+      onChange: q => {
+        document.getElementById('flt-res-val').textContent = q.toFixed(2);
+        if (synth) synth.set_filter_resonance(q);
+      },
+    });
+    document.getElementById('flt-res-val').textContent = resKnob.value.toFixed(2);
   </script>
 </body>
 </html>

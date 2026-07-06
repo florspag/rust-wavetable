@@ -1,10 +1,12 @@
 use wasm_bindgen::prelude::*;
 use crate::oscillator::Oscillator;
 use crate::adsr::Adsr;
+use crate::filter::Filter;
 
 #[wasm_bindgen]
 pub struct Synth {
     osc: Oscillator,
+    filter: Filter,
     env: Adsr,
     sample_rate: f32,
     auto_release: u64,
@@ -17,6 +19,7 @@ impl Synth {
     pub fn new(sample_rate: f32) -> Self {
         Self {
             osc: Oscillator::new(),
+            filter: Filter::new(sample_rate),
             env: Adsr::new(sample_rate),
             sample_rate,
             auto_release: 0,
@@ -63,6 +66,18 @@ impl Synth {
         self.env.set_release(secs);
     }
 
+    pub fn set_filter_cutoff(&mut self, hz: f32) {
+        self.filter.set_cutoff(hz);
+    }
+
+    pub fn set_filter_resonance(&mut self, q: f32) {
+        self.filter.set_resonance(q);
+    }
+
+    pub fn set_filter_type(&mut self, t: u32) {
+        self.filter.set_type(t);
+    }
+
     pub fn tick(&mut self) -> f32 {
         if self.auto_release > 0 {
             self.auto_release -= 1;
@@ -71,7 +86,9 @@ impl Synth {
             }
         }
         if self.env.is_active() {
-            self.osc.tick() * self.env.tick() * 0.3
+            let osc = self.osc.tick();
+            let filtered = self.filter.process(osc);
+            filtered * self.env.tick() * 0.3
         } else {
             0.0
         }

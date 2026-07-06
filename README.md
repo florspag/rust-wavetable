@@ -66,6 +66,7 @@ Open [http://localhost:8080](http://localhost:8080).
 | ------- | ----------- |
 | **Oscilloscope** | Live waveform preview — grey when idle, blue when playing |
 | **Waveform** | Switch between Sine, Sawtooth, Square, Triangle |
+| **Filter** | Biquad filter with a cycling type selector (LP → HP → BP → LP) and two rotary knobs: Cutoff (log 20 Hz–20 kHz) and Resonance (0.1–20); drag a knob up to increase, down to decrease |
 | **Frequency** | Logarithmic slider (20–4000 Hz) — controls oscillator pitch independently of the piano; shows Hz and nearest note name |
 | **ADSR Envelope** | Interactive canvas — drag the green handle (X = attack time), yellow handle (X = decay time, Y = sustain level), red handle (X = release time) |
 | **Keyboard** | 3-octave piano (C3–C5); click keys or use `A W S E D F T G Y H U J K`; ▼/▲ buttons shift the keyboard mapping by one octave |
@@ -81,6 +82,7 @@ src/
   wavetable.rs     # Table generation (sine, saw, square, triangle)
   oscillator.rs    # Phase accumulator + linear interpolation
   adsr.rs          # ADSR envelope with live parameter setters
+  filter.rs        # Biquad filter (LP / HP / BP, Audio EQ Cookbook)
   keys.rs          # QWERTY → MIDI mapping (terminal only)
   wasm_synth.rs    # wasm-bindgen Synth wrapper (WASM only)
 web/

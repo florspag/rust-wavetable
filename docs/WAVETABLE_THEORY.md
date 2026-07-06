@@ -103,6 +103,29 @@ In the browser GUI the ADSR canvas lets you drag control points directly on the 
 
 ---
 
+## Biquad Filter
+
+After the oscillator, the signal passes through a second-order IIR (biquad) filter implemented with the Audio EQ Cookbook coefficients. Three modes are available:
+
+| Mode | What it does |
+| ------- | ------------ |
+| **LP** (Low-Pass) | Passes frequencies below the cutoff, attenuates above — rounds off harsh harmonics |
+| **HP** (High-Pass) | Passes frequencies above the cutoff, attenuates below — thins out the sound |
+| **BP** (Band-Pass) | Passes a band around the cutoff, attenuates both sides — nasal / telephone effect |
+
+**Cutoff** sets the −3 dB transition frequency (20 Hz – 20 kHz, logarithmic).  
+**Resonance** (Q) controls the peak at the cutoff: Q = 0.707 (Butterworth) is flat; higher Q creates a resonant peak used for classic synth sweep sounds.
+
+The filter type cycles LP → HP → BP → LP with each click of the selector — matching the one-knob-per-function feel of hardware synthesisers.
+
+The transfer function is computed via the Direct Form II transposed structure, which is numerically stable for audio-rate coefficients:
+
+```
+y[n] = b0·x[n] + b1·x[n−1] + b2·x[n−2] − a1·y[n−1] − a2·y[n−2]
+```
+
+---
+
 ## Signal Flow
 
 ```
@@ -115,7 +138,9 @@ Piano key OR frequency slider → frequency (Hz)
             ↓
   phase → table index → linear interpolation → raw sample
             ↓
-  ADSR envelope → amplitude × raw sample × 0.3
+  biquad filter → cutoff / resonance / LP-HP-BP shaping
+            ↓
+  ADSR envelope → amplitude × filtered sample × 0.3
             ↓
   ScriptProcessorNode / cpal → speakers
 ```
