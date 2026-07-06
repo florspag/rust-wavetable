@@ -41,6 +41,20 @@
       max-width: 720px;
     }
 
+    .two-col {
+      display: flex;
+      gap: 0.75rem;
+      width: 100%;
+      max-width: 720px;
+    }
+
+    .two-col > .panel {
+      flex: 1;
+      min-width: 0;
+      width: auto;
+      max-width: none;
+    }
+
     .panel-title {
       font-size: 0.65rem;
       color: #585b70;
@@ -152,6 +166,15 @@
       color: #cba6f7;
     }
 
+    #flt-scope {
+      display: block;
+      width: 100%;
+      height: 90px;
+      background: #11111b;
+      border-radius: 4px;
+      margin-top: 0.75rem;
+    }
+
     /* Frequency panel */
     .freq-row {
       display: flex;
@@ -239,30 +262,6 @@
       overflow-x: auto;
     }
 
-    .oct-row {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      gap: 1rem;
-      margin-top: 0.5rem;
-      font-size: 0.75rem;
-      color: #a6adc8;
-    }
-
-    .oct-btn {
-      padding: 0.25rem 0.7rem;
-      background: #1e1e2e;
-      border: 1px solid #313244;
-      border-radius: 4px;
-      color: #89b4fa;
-      font-family: inherit;
-      font-size: 0.75rem;
-      cursor: pointer;
-      transition: background 0.1s;
-    }
-
-    .oct-btn:hover { background: #313244; }
-    .oct-btn:disabled { opacity: 0.3; cursor: default; }
 
     .piano {
       position: relative;
@@ -272,8 +271,8 @@
     }
 
     .white-key {
-      width: 44px;
-      height: 130px;
+      width: 28px;
+      height: 100px;
       background: linear-gradient(to bottom, #e8e8e8, #f5f5f5);
       border: 1px solid #aaa;
       border-top: none;
@@ -302,8 +301,8 @@
 
     .black-key {
       position: absolute;
-      width: 26px;
-      height: 80px;
+      width: 17px;
+      height: 58px;
       background: linear-gradient(to bottom, #222, #333);
       border-radius: 0 0 4px 4px;
       cursor: pointer;
@@ -355,26 +354,48 @@
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-title">Filter</div>
-    <div class="flt-row">
-      <div class="knob-wrap">
-        <button class="flt-type-btn" id="flt-type">LP</button>
-        <span class="knob-label">Type</span>
-      </div>
-      <div class="flt-knobs">
-        <div class="knob-wrap">
-          <canvas class="knob-canvas" id="flt-cutoff-knob"></canvas>
-          <span class="knob-label">Cutoff</span>
-          <span class="knob-val" id="flt-cutoff-val">20 kHz</span>
-        </div>
-        <div class="knob-wrap">
-          <canvas class="knob-canvas" id="flt-res-knob"></canvas>
-          <span class="knob-label">Resonance</span>
-          <span class="knob-val" id="flt-res-val">0.71</span>
-        </div>
+  <div class="two-col">
+    <div class="panel">
+      <div class="panel-title">ADSR Envelope — drag handles to edit</div>
+      <canvas id="adsr-canvas"></canvas>
+      <div class="adsr-vals">
+        <span>A<b id="av">10ms</b></span>
+        <span>D<b id="dv">150ms</b></span>
+        <span>S<b id="sv">70%</b></span>
+        <span>R<b id="rv">400ms</b></span>
       </div>
     </div>
+    <div class="panel">
+      <div class="panel-title">Filter</div>
+      <div class="flt-row">
+        <div class="knob-wrap">
+          <button class="flt-type-btn" id="flt-type">LP</button>
+          <span class="knob-label">Type</span>
+        </div>
+        <div class="flt-knobs">
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="flt-cutoff-knob"></canvas>
+            <span class="knob-label">Cutoff</span>
+            <span class="knob-val" id="flt-cutoff-val">20 kHz</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="flt-res-knob"></canvas>
+            <span class="knob-label">Resonance</span>
+            <span class="knob-val" id="flt-res-val">0.71</span>
+          </div>
+        </div>
+      </div>
+      <canvas id="flt-scope"></canvas>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Keyboard — C2 to C7</div>
+    <div class="piano-wrap">
+      <div class="piano" id="piano"></div>
+    </div>
+    <div class="note-display" id="note-display"></div>
+    <div class="key-hint">A W S E D F T G Y H U J K → C4–C5</div>
   </div>
 
   <div class="panel">
@@ -387,44 +408,26 @@
     <div class="freq-range-labels"><span>20 Hz</span><span>4000 Hz</span></div>
   </div>
 
-  <div class="panel">
-    <div class="panel-title">ADSR Envelope — drag handles to edit</div>
-    <canvas id="adsr-canvas"></canvas>
-    <div class="adsr-vals">
-      <span>A<b id="av">10ms</b></span>
-      <span>D<b id="dv">150ms</b></span>
-      <span>S<b id="sv">70%</b></span>
-      <span>R<b id="rv">400ms</b></span>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-title">Keyboard — C3 to C5</div>
-    <div class="piano-wrap">
-      <div class="piano" id="piano"></div>
-    </div>
-    <div class="oct-row">
-      <button class="oct-btn" id="oct-down">▼ Oct</button>
-      <span id="oct-label">Oct 4 · C4–C5</span>
-      <button class="oct-btn" id="oct-up">Oct ▲</button>
-    </div>
-    <div class="note-display" id="note-display"></div>
-    <div class="key-hint">A W S E D F T G Y H U J K &nbsp;·&nbsp; use ▼ / ▲ to shift octave</div>
-  </div>
-
   <script type="module">
     import init, { Synth } from './pkg/rust_wavetable.js';
 
-    // ── Piano layout (C3–C5, 3 octaves) ────────────────────────────────
+    // ── Piano layout (C2–C7, 5 octaves) ────────────────────────────────
     const NOTE_NAMES  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-    const WHITE_SEMI  = new Set([0, 2, 4, 5, 7, 9, 11]); // semitones that are white keys
-    const PIANO_START = 48;  // C3
-    const PIANO_END   = 72;  // C5
-    const WW = 44, BW = 26;  // white / black key widths (px)
+    const WHITE_SEMI  = new Set([0, 2, 4, 5, 7, 9, 11]);
+    const PIANO_START = 36;  // C2
+    const PIANO_END   = 96;  // C7
+    const WW = 28, BW = 17;  // white / black key widths (px)
 
     const isWhite = m => WHITE_SEMI.has(m % 12);
     function midiFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
     function midiName(m) { return NOTE_NAMES[m % 12] + (Math.floor(m / 12) - 1); }
+
+    // Keyboard shortcuts fixed at C4–C5
+    const KEY_MAP = { 'a':60,'w':61,'s':62,'e':63,'d':64,'f':65,'t':66,'g':67,'y':68,'h':69,'u':70,'j':71,'k':72 };
+    function labelFor(midi) {
+      for (const [k, v] of Object.entries(KEY_MAP)) if (v === midi) return k.toUpperCase();
+      return '';
+    }
 
     // Build ordered white-key list (with pixel index)
     const pianoWhite = [], pianoBlack = [];
@@ -437,35 +440,6 @@
         const rightW = pianoWhite.find(w => w.midi > m);
         if (rightW) pianoBlack.push({ midi: m, left: rightW.wi * WW - BW / 2 });
       }
-    }
-
-    // ── Octave-shift state ───────────────────────────────────────────────
-    // BASE_KEY_MAP maps keyboard chars → MIDI at octave-shift = 0 (C4-C5)
-    const BASE_KEY_MAP = { 'a':60,'w':61,'s':62,'e':63,'d':64,'f':65,'t':66,'g':67,'y':68,'h':69,'u':70,'j':71,'k':72 };
-    const OCT_MIN = -1, OCT_MAX = 0; // shift -1 = C3–C4, 0 = C4–C5
-    let octaveShift = 0;
-
-    function shiftedKeyMap() {
-      const shift = octaveShift * 12, m = {};
-      for (const [k, v] of Object.entries(BASE_KEY_MAP)) m[k] = v + shift;
-      return m;
-    }
-
-    function labelFor(midi) {
-      for (const [k, v] of Object.entries(shiftedKeyMap())) {
-        if (v === midi) return k.toUpperCase();
-      }
-      return '';
-    }
-
-    function refreshKeyLabels() {
-      document.querySelectorAll('[data-midi]').forEach(el => {
-        el.querySelector('.key-label').textContent = labelFor(parseInt(el.dataset.midi));
-      });
-      const base = 4 + octaveShift;
-      document.getElementById('oct-label').textContent = `Oct ${base} · C${base}–C${base + 1}`;
-      document.getElementById('oct-down').disabled = octaveShift <= OCT_MIN;
-      document.getElementById('oct-up').disabled   = octaveShift >= OCT_MAX;
     }
 
     // ── Build piano DOM ─────────────────────────────────────────────────
@@ -488,15 +462,6 @@
       el.innerHTML = `<span class="key-label">${labelFor(k.midi)}</span>`;
       pianoEl.appendChild(el);
     });
-
-    // Octave buttons
-    document.getElementById('oct-down').addEventListener('click', () => {
-      if (octaveShift > OCT_MIN) { octaveShift--; refreshKeyLabels(); }
-    });
-    document.getElementById('oct-up').addEventListener('click', () => {
-      if (octaveShift < OCT_MAX) { octaveShift++; refreshKeyLabels(); }
-    });
-    refreshKeyLabels(); // set initial disabled state
 
     // ── Frequency slider (logarithmic: 20 Hz – 4000 Hz) ────────────────
     const FREQ_MIN = 20, FREQ_MAX = 4000;
@@ -663,13 +628,13 @@
     // Keyboard events
     document.addEventListener('keydown', e => {
       if (e.repeat) return;
-      const midi = shiftedKeyMap()[e.key.toLowerCase()];
+      const midi = KEY_MAP[e.key.toLowerCase()];
       if (midi === undefined) return;
       noteOn(midi);
     });
 
     document.addEventListener('keyup', e => {
-      const midi = shiftedKeyMap()[e.key.toLowerCase()];
+      const midi = KEY_MAP[e.key.toLowerCase()];
       if (midi === undefined) return;
       noteOff(midi);
     });
@@ -1010,6 +975,105 @@
       return hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : Math.round(hz) + ' Hz';
     }
 
+    const FLT_SR = 44100, FLT_FMIN = 20, FLT_FMAX = 20000;
+    const DB_MIN = -48, DB_MAX = 30;
+
+    function computeFilterCoeffs(type, cutoff, q) {
+      const w0 = 2 * Math.PI * cutoff / FLT_SR;
+      const sinw = Math.sin(w0), cosw = Math.cos(w0);
+      const alpha = sinw / (2 * q);
+      const a0 = 1 + alpha, a1 = -2 * cosw, a2 = 1 - alpha;
+      let b0, b1, b2;
+      if (type === 0)      { b0 = (1 - cosw) / 2; b1 =  1 - cosw;  b2 = b0; }
+      else if (type === 1) { b0 = (1 + cosw) / 2; b1 = -(1 + cosw); b2 = b0; }
+      else                 { b0 = sinw / 2;        b1 = 0;           b2 = -b0; }
+      return { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0 };
+    }
+
+    function filterResponseDb(c, freq) {
+      const w = 2 * Math.PI * freq / FLT_SR;
+      const cw = Math.cos(w), sw = Math.sin(w), c2 = Math.cos(2*w), s2 = Math.sin(2*w);
+      const nRe = c.b0 + c.b1*cw + c.b2*c2, nIm = -(c.b1*sw + c.b2*s2);
+      const dRe = 1   + c.a1*cw + c.a2*c2, dIm = -(c.a1*sw + c.a2*s2);
+      const mag = Math.sqrt(nRe*nRe + nIm*nIm) / Math.sqrt(dRe*dRe + dIm*dIm);
+      return 20 * Math.log10(Math.max(mag, 1e-6));
+    }
+
+    const fltScopeCanvas = document.getElementById('flt-scope');
+    const fltScopeCtx    = fltScopeCanvas.getContext('2d');
+
+    function drawFilterScope() {
+      const W = fltScopeCanvas.offsetWidth, H = fltScopeCanvas.offsetHeight;
+      if (!W || !H) return;
+      const dpr = window.devicePixelRatio || 1;
+      if (fltScopeCanvas.width !== Math.round(W * dpr)) {
+        fltScopeCanvas.width  = Math.round(W * dpr);
+        fltScopeCanvas.height = Math.round(H * dpr);
+        fltScopeCtx.scale(dpr, dpr);
+      }
+      const ctx = fltScopeCtx;
+      const freqToX = f  => W * Math.log(f / FLT_FMIN) / Math.log(FLT_FMAX / FLT_FMIN);
+      const dbToY   = db => H * (1 - (db - DB_MIN) / (DB_MAX - DB_MIN));
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#11111b';
+      ctx.fillRect(0, 0, W, H);
+
+      // dB grid
+      ctx.font = '8px Courier New';
+      [-48, -36, -24, -12, 0, 12].forEach(db => {
+        const y = dbToY(db);
+        ctx.strokeStyle = db === 0 ? '#2a2a3e' : '#1a1a2a';
+        ctx.lineWidth = db === 0 ? 1.5 : 1;
+        ctx.setLineDash(db === 0 ? [] : [3, 5]);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#45475a';
+        ctx.textAlign = 'left';
+        ctx.fillText(db + 'dB', 2, y - 2);
+      });
+
+      // frequency grid
+      [50, 100, 200, 500, 1000, 2000, 5000, 10000].forEach(f => {
+        const x = freqToX(f);
+        ctx.strokeStyle = '#1a1a2a';
+        ctx.lineWidth = 1; ctx.setLineDash([3, 5]);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+        ctx.setLineDash([]);
+      });
+      ctx.fillStyle = '#45475a'; ctx.textAlign = 'center';
+      [100, 1000, 10000].forEach(f => {
+        ctx.fillText(f >= 1000 ? f/1000 + 'k' : f, freqToX(f), H - 2);
+      });
+
+      // cutoff marker
+      const cx = freqToX(cutoffKnob.value);
+      ctx.strokeStyle = '#cba6f733'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
+
+      // frequency response
+      const coeffs = computeFilterCoeffs(fltTypeIdx, cutoffKnob.value, resKnob.value);
+
+      // fill
+      ctx.beginPath();
+      for (let px = 0; px <= W; px++) {
+        const f = FLT_FMIN * Math.pow(FLT_FMAX / FLT_FMIN, px / W);
+        const y = Math.max(-4, Math.min(H + 4, dbToY(filterResponseDb(coeffs, f))));
+        px === 0 ? ctx.moveTo(0, y) : ctx.lineTo(px, y);
+      }
+      ctx.lineTo(W, H + 4); ctx.lineTo(0, H + 4); ctx.closePath();
+      ctx.fillStyle = '#cba6f720'; ctx.fill();
+
+      // stroke
+      ctx.beginPath();
+      for (let px = 0; px <= W; px++) {
+        const f = FLT_FMIN * Math.pow(FLT_FMAX / FLT_FMIN, px / W);
+        const y = Math.max(-4, Math.min(H + 4, dbToY(filterResponseDb(coeffs, f))));
+        px === 0 ? ctx.moveTo(0, y) : ctx.lineTo(px, y);
+      }
+      ctx.strokeStyle = '#cba6f7'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+    }
+
     const fltTypes = ['LP', 'HP', 'BP'];
     let fltTypeIdx = 0;
     const fltTypeBtn = document.getElementById('flt-type');
@@ -1017,6 +1081,7 @@
       fltTypeIdx = (fltTypeIdx + 1) % 3;
       fltTypeBtn.textContent = fltTypes[fltTypeIdx];
       if (synth) synth.set_filter_type(fltTypeIdx);
+      drawFilterScope();
     });
 
     const cutoffKnob = new Knob(document.getElementById('flt-cutoff-knob'), {
@@ -1024,6 +1089,7 @@
       onChange: hz => {
         document.getElementById('flt-cutoff-val').textContent = fmtCutoff(hz);
         if (synth) synth.set_filter_cutoff(hz);
+        drawFilterScope();
       },
     });
     document.getElementById('flt-cutoff-val').textContent = fmtCutoff(cutoffKnob.value);
@@ -1033,9 +1099,13 @@
       onChange: q => {
         document.getElementById('flt-res-val').textContent = q.toFixed(2);
         if (synth) synth.set_filter_resonance(q);
+        drawFilterScope();
       },
     });
     document.getElementById('flt-res-val').textContent = resKnob.value.toFixed(2);
+
+    drawFilterScope();
+    new ResizeObserver(drawFilterScope).observe(fltScopeCanvas);
   </script>
 </body>
 </html>
