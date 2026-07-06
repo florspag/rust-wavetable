@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wavetable Synth</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f0f1a;
+      color: #cdd6f4;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+      gap: 1.5rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      color: #89b4fa;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    #status {
+      font-size: 0.75rem;
+      color: #6c7086;
+      letter-spacing: 0.05em;
+    }
+
+    .panel {
+      background: #181825;
+      border: 1px solid #313244;
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      width: 100%;
+      max-width: 720px;
+    }
+
+    .panel-title {
+      font-size: 0.65rem;
+      color: #585b70;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      margin-bottom: 1rem;
+    }
+
+    /* Oscilloscope */
+    #scope {
+      display: block;
+      width: 100%;
+      height: 100px;
+      border-radius: 4px;
+      background: #11111b;
+    }
+
+    /* Waveform selector */
+    .wf-buttons {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .wf-btn {
+      flex: 1;
+      padding: 0.55rem 0.25rem;
+      background: #1e1e2e;
+      border: 1px solid #313244;
+      border-radius: 5px;
+      color: #a6adc8;
+      font-family: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+    }
+
+    .wf-btn:hover { background: #313244; color: #cdd6f4; }
+
+    .wf-btn.active {
+      background: #1e3a5f;
+      border-color: #89b4fa;
+      color: #89b4fa;
+      font-weight: bold;
+    }
+
+    /* ADSR */
+    .adsr-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+    }
+
+    .adsr-knob {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .adsr-label {
+      font-size: 0.65rem;
+      color: #6c7086;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+    }
+
+    .adsr-value {
+      font-size: 0.7rem;
+      color: #89b4fa;
+      min-height: 1rem;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      appearance: none;
+      writing-mode: vertical-lr;
+      direction: rtl;
+      width: 6px;
+      height: 90px;
+      background: #313244;
+      border-radius: 3px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      background: #89b4fa;
+      border-radius: 50%;
+      border: 2px solid #0f0f1a;
+      box-shadow: 0 0 6px #89b4fa55;
+    }
+
+    input[type=range]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      background: #89b4fa;
+      border-radius: 50%;
+      border: 2px solid #0f0f1a;
+    }
+
+    /* Piano */
+    .piano-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .piano {
+      position: relative;
+      display: flex;
+      user-select: none;
+      touch-action: none;
+    }
+
+    .white-key {
+      width: 52px;
+      height: 140px;
+      background: linear-gradient(to bottom, #e8e8e8, #f5f5f5);
+      border: 1px solid #aaa;
+      border-top: none;
+      border-radius: 0 0 6px 6px;
+      cursor: pointer;
+      position: relative;
+      z-index: 1;
+      transition: background 0.05s;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: 8px;
+    }
+
+    .white-key:hover { background: linear-gradient(to bottom, #d0deff, #e4ebff); }
+    .white-key.active { background: linear-gradient(to bottom, #93c0ff, #b8d4ff); }
+
+    .key-label {
+      font-size: 0.6rem;
+      color: #888;
+      font-family: 'Courier New', monospace;
+      pointer-events: none;
+    }
+
+    .white-key.active .key-label { color: #2255aa; }
+
+    .black-key {
+      position: absolute;
+      width: 32px;
+      height: 88px;
+      background: linear-gradient(to bottom, #222, #333);
+      border-radius: 0 0 4px 4px;
+      cursor: pointer;
+      z-index: 2;
+      top: 0;
+      transition: background 0.05s;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: 6px;
+    }
+
+    .black-key:hover { background: linear-gradient(to bottom, #334, #445); }
+    .black-key.active { background: linear-gradient(to bottom, #2255aa, #3366cc); }
+
+    .black-key .key-label { color: #666; font-size: 0.55rem; }
+    .black-key.active .key-label { color: #aaccff; }
+
+    .note-display {
+      font-size: 0.8rem;
+      color: #89b4fa;
+      letter-spacing: 0.05em;
+      min-height: 1.2rem;
+      text-align: center;
+    }
+
+    .key-hint {
+      font-size: 0.65rem;
+      color: #45475a;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Wavetable Synth</h1>
+  <p id="status">Click a key to start audio...</p>
+
+  <div class="panel">
+    <div class="panel-title">Oscilloscope</div>
+    <canvas id="scope"></canvas>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Waveform</div>
+    <div class="wf-buttons">
+      <button class="wf-btn active" data-idx="0">Sine</button>
+      <button class="wf-btn"        data-idx="1">Sawtooth</button>
+      <button class="wf-btn"        data-idx="2">Square</button>
+      <button class="wf-btn"        data-idx="3">Triangle</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">ADSR Envelope</div>
+    <div class="adsr-grid">
+      <div class="adsr-knob">
+        <div class="adsr-label">Attack</div>
+        <input type="range" id="attack" min="5" max="2000" value="10" step="1">
+        <div class="adsr-value" id="attack-val">10ms</div>
+      </div>
+      <div class="adsr-knob">
+        <div class="adsr-label">Decay</div>
+        <input type="range" id="decay" min="5" max="3000" value="150" step="1">
+        <div class="adsr-value" id="decay-val">150ms</div>
+      </div>
+      <div class="adsr-knob">
+        <div class="adsr-label">Sustain</div>
+        <input type="range" id="sustain" min="0" max="100" value="70" step="1">
+        <div class="adsr-value" id="sustain-val">70%</div>
+      </div>
+      <div class="adsr-knob">
+        <div class="adsr-label">Release</div>
+        <input type="range" id="release" min="5" max="5000" value="400" step="1">
+        <div class="adsr-value" id="release-val">400ms</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Keyboard — C4 to C5</div>
+    <div class="piano-wrap">
+      <div class="piano" id="piano"></div>
+      <div class="note-display" id="note-display"></div>
+      <div class="key-hint">Click keys or use keyboard: A W S E D F T G Y H U J K</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import init, { Synth } from './pkg/rust_wavetable.js';
+
+    // ── Piano layout ────────────────────────────────────────────────────
+    // White keys: C4 D4 E4 F4 G4 A4 B4 C5  (MIDI 60-72)
+    // Black keys: C#4 D#4 F#4 G#4 A#4      (MIDI 61,63,66,68,70)
+    const WHITE_KEYS = [
+      { midi: 60, label: 'A', name: 'C4' },
+      { midi: 62, label: 'S', name: 'D4' },
+      { midi: 64, label: 'D', name: 'E4' },
+      { midi: 65, label: 'F', name: 'F4' },
+      { midi: 67, label: 'G', name: 'G4' },
+      { midi: 69, label: 'H', name: 'A4' },
+      { midi: 71, label: 'J', name: 'B4' },
+      { midi: 72, label: 'K', name: 'C5' },
+    ];
+    // left offset = left-edge of the black key in px (white key = 52px wide, black = 32px)
+    const BLACK_KEYS = [
+      { midi: 61, label: 'W', name: 'C#4', left: 36  },
+      { midi: 63, label: 'E', name: 'D#4', left: 88  },
+      { midi: 66, label: 'T', name: 'F#4', left: 192 },
+      { midi: 68, label: 'Y', name: 'G#4', left: 244 },
+      { midi: 70, label: 'U', name: 'A#4', left: 296 },
+    ];
+
+    const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    const KEY_MAP = {
+      'a':60,'w':61,'s':62,'e':63,'d':64,
+      'f':65,'t':66,'g':67,'y':68,'h':69,
+      'u':70,'j':71,'k':72
+    };
+
+    function midiFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+    function midiName(m) {
+      return NOTE_NAMES[m % 12] + (Math.floor(m / 12) - 1);
+    }
+
+    // ── Build piano DOM ─────────────────────────────────────────────────
+    const pianoEl = document.getElementById('piano');
+    pianoEl.style.width = (52 * 8) + 'px';
+
+    WHITE_KEYS.forEach(k => {
+      const el = document.createElement('div');
+      el.className = 'white-key';
+      el.dataset.midi = k.midi;
+      el.innerHTML = `<span class="key-label">${k.label}</span>`;
+      pianoEl.appendChild(el);
+    });
+
+    BLACK_KEYS.forEach(k => {
+      const el = document.createElement('div');
+      el.className = 'black-key';
+      el.dataset.midi = k.midi;
+      el.style.left = k.left + 'px';
+      el.innerHTML = `<span class="key-label">${k.label}</span>`;
+      pianoEl.appendChild(el);
+    });
+
+    // ── Waveform shapes (for oscilloscope preview) ───────────────────────
+    const WAVE_FNS = [
+      t => Math.sin(2 * Math.PI * t),
+      t => 2 * t - 1,
+      t => t < 0.5 ? 1 : -1,
+      t => 1 - 4 * Math.abs(t - 0.5),
+    ];
+
+    let activeWave = 0;
+    let isPlaying = false;
+    let scopeOffset = 0;
+
+    // ── Oscilloscope ────────────────────────────────────────────────────
+    const scopeCanvas = document.getElementById('scope');
+    const scopeCtx = scopeCanvas.getContext('2d');
+
+    function drawScope() {
+      const W = scopeCanvas.offsetWidth;
+      const H = scopeCanvas.offsetHeight;
+      if (scopeCanvas.width !== W || scopeCanvas.height !== H) {
+        scopeCanvas.width = W;
+        scopeCanvas.height = H;
+      }
+
+      scopeCtx.fillStyle = '#11111b';
+      scopeCtx.fillRect(0, 0, W, H);
+
+      // centre line
+      scopeCtx.strokeStyle = '#1e1e2e';
+      scopeCtx.lineWidth = 1;
+      scopeCtx.beginPath();
+      scopeCtx.moveTo(0, H / 2);
+      scopeCtx.lineTo(W, H / 2);
+      scopeCtx.stroke();
+
+      // waveform
+      scopeCtx.strokeStyle = isPlaying ? '#89b4fa' : '#313244';
+      scopeCtx.lineWidth = 2;
+      scopeCtx.beginPath();
+      const cycles = 3;
+      for (let x = 0; x <= W; x++) {
+        const t = ((x / W) * cycles + scopeOffset) % 1;
+        const amp = WAVE_FNS[activeWave](t);
+        const y = H / 2 - amp * (H / 2 - 6);
+        x === 0 ? scopeCtx.moveTo(x, y) : scopeCtx.lineTo(x, y);
+      }
+      scopeCtx.stroke();
+
+      if (isPlaying) scopeOffset = (scopeOffset + 0.004) % 1;
+      requestAnimationFrame(drawScope);
+    }
+    drawScope();
+
+    // ── Audio engine ────────────────────────────────────────────────────
+    let synth = null;
+    let audioCtx = null;
+    let processor = null;
+    const statusEl = document.getElementById('status');
+    const noteDisplay = document.getElementById('note-display');
+
+    async function startAudio() {
+      if (audioCtx) return;
+      statusEl.textContent = 'Loading WASM...';
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+      await init();
+      synth = new Synth(audioCtx.sampleRate);
+
+      // ScriptProcessorNode — calls into WASM for each sample
+      processor = audioCtx.createScriptProcessor(256, 0, 1);
+      processor.onaudioprocess = e => {
+        const out = e.outputBuffer.getChannelData(0);
+        for (let i = 0; i < out.length; i++) out[i] = synth.tick();
+      };
+      processor.connect(audioCtx.destination);
+      statusEl.textContent = 'Ready';
+    }
+
+    // ── Key interaction ─────────────────────────────────────────────────
+    let activeNote = null;
+
+    function noteOn(midi) {
+      startAudio().then(() => {
+        if (!synth) return;
+        activeNote = midi;
+        synth.note_on(midiFreq(midi));
+        isPlaying = true;
+        noteDisplay.textContent = `${midiName(midi)}  ·  ${midiFreq(midi).toFixed(1)} Hz`;
+        document.querySelectorAll('[data-midi]').forEach(el => {
+          el.classList.toggle('active', parseInt(el.dataset.midi) === midi);
+        });
+      });
+    }
+
+    function noteOff(midi) {
+      if (activeNote !== midi) return;
+      if (synth) { synth.note_off(); isPlaying = false; }
+      activeNote = null;
+      noteDisplay.textContent = '';
+      document.querySelectorAll('[data-midi]').forEach(el => el.classList.remove('active'));
+    }
+
+    // Piano mouse events
+    pianoEl.addEventListener('pointerdown', e => {
+      const key = e.target.closest('[data-midi]');
+      if (!key) return;
+      e.preventDefault();
+      key.setPointerCapture(e.pointerId);
+      noteOn(parseInt(key.dataset.midi));
+    });
+
+    pianoEl.addEventListener('pointerup', e => {
+      const key = e.target.closest('[data-midi]');
+      if (key) noteOff(parseInt(key.dataset.midi));
+    });
+
+    pianoEl.addEventListener('pointerleave', () => {
+      if (activeNote !== null) noteOff(activeNote);
+    });
+
+    // Keyboard events
+    const heldKeys = new Set();
+    document.addEventListener('keydown', e => {
+      if (e.repeat) return;
+      const midi = KEY_MAP[e.key.toLowerCase()];
+      if (midi === undefined) return;
+      heldKeys.add(e.key.toLowerCase());
+      noteOn(midi);
+    });
+
+    document.addEventListener('keyup', e => {
+      const k = e.key.toLowerCase();
+      const midi = KEY_MAP[k];
+      if (midi === undefined) return;
+      heldKeys.delete(k);
+      noteOff(midi);
+    });
+
+    // ── Waveform buttons ────────────────────────────────────────────────
+    document.querySelectorAll('.wf-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeWave = parseInt(btn.dataset.idx);
+        document.querySelectorAll('.wf-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        if (synth) synth.set_waveform(activeWave);
+      });
+    });
+
+    // ── ADSR sliders ────────────────────────────────────────────────────
+    function slider(id, valId, transform, setter, fmt) {
+      const el = document.getElementById(id);
+      const valEl = document.getElementById(valId);
+      el.addEventListener('input', () => {
+        const v = parseFloat(el.value);
+        valEl.textContent = fmt(v);
+        if (synth) setter(transform(v));
+      });
+    }
+
+    slider('attack',  'attack-val',  v => v / 1000, s => synth.set_attack(s),  v => v + 'ms');
+    slider('decay',   'decay-val',   v => v / 1000, s => synth.set_decay(s),   v => v + 'ms');
+    slider('sustain', 'sustain-val', v => v / 100,  s => synth.set_sustain(s), v => v + '%');
+    slider('release', 'release-val', v => v / 1000, s => synth.set_release(s), v => v + 'ms');
+  </script>
+</body>
+</html>
