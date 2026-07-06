@@ -39,6 +39,14 @@ impl Synth {
         self.osc.set_waveform(idx as usize);
     }
 
+    pub fn change_freq(&mut self, freq: f32) {
+        self.osc.change_freq(freq, self.sample_rate);
+        if !self.env.is_active() {
+            self.env.note_on();
+            self.auto_release = self.auto_release_samples;
+        }
+    }
+
     pub fn set_attack(&mut self, secs: f32) {
         self.env.set_attack(secs);
     }

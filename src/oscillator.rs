@@ -26,6 +26,11 @@ impl Oscillator {
         self.phase = 0.0;
     }
 
+    pub fn change_freq(&mut self, freq: f32, sr: f32) {
+        self.phase_inc = freq / sr;
+        // phase preserved → no click when sliding pitch live
+    }
+
     pub fn set_waveform(&mut self, idx: usize) {
         self.active = idx.min(3);
     }

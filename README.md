@@ -2,13 +2,13 @@
 
 A wavetable synthesizer written in Rust, with two interfaces:
 
-- **Terminal** — keyboard-driven, plays audio via the system output device
-- **Browser (WASM)** — full GUI with piano keyboard, oscilloscope, and ADSR controls
+- **Terminal** — keyboard-driven, plays audio natively via the system output device
+- **Browser (WASM)** — interactive GUI with piano, oscilloscope, frequency control, and ADSR envelope editor
 
 ## Waveforms
 
 | # | Shape | Harmonics |
-|---|-------|-----------|
+| --- | ------- | --------- |
 | 1 | Sine | Fundamental only |
 | 2 | Sawtooth | All harmonics (1/n) |
 | 3 | Square | Odd harmonics (1/n) |
@@ -27,12 +27,12 @@ cargo run --release
 ### Controls
 
 | Keys | Action |
-|------|--------|
-| `A W S E D F T G Y H U J K` | Play notes C4 → C5 |
+| ------- | ------- |
+| `A W S E D F T G Y H U J K` | Play notes C4 → C5 (QWERTY piano layout) |
 | `1` `2` `3` `4` | Switch waveform |
 | `Q` / `Esc` | Quit |
 
-White keys on the home row, black keys on the top row — standard QWERTY piano layout.
+White keys on the home row, black keys on the top row.
 
 ---
 
@@ -52,7 +52,7 @@ cargo install wasm-pack
 wasm-pack build --target web --out-dir web/pkg
 ```
 
-### Run
+### Serve
 
 ```bash
 cd web && python3 -m http.server 8080
@@ -60,25 +60,27 @@ cd web && python3 -m http.server 8080
 
 Open [http://localhost:8080](http://localhost:8080).
 
-### Features
+### GUI panels
 
-- Clickable piano keyboard (C4–C5) with keyboard shortcut hints
-- Same `A W S E D F T G Y H U J K` layout as the terminal app
-- Waveform selector
-- ADSR envelope sliders (Attack, Decay, Sustain, Release)
-- Animated oscilloscope
+| Panel | Description |
+| ------- | ----------- |
+| **Oscilloscope** | Live waveform preview — grey when idle, blue when playing |
+| **Waveform** | Switch between Sine, Sawtooth, Square, Triangle |
+| **Frequency** | Logarithmic slider (20–4000 Hz) — controls oscillator pitch independently of the piano; shows Hz and nearest note name |
+| **ADSR Envelope** | Interactive canvas — drag the green handle (X = attack time), yellow handle (X = decay time, Y = sustain level), red handle (X = release time) |
+| **Keyboard** | 3-octave piano (C3–C5); click keys or use `A W S E D F T G Y H U J K`; ▼/▲ buttons shift the keyboard mapping by one octave |
 
 ---
 
 ## Project structure
 
-```
+```text
 src/
   main.rs          # Terminal binary (cpal + crossterm)
   lib.rs           # Library root — shared by WASM build
   wavetable.rs     # Table generation (sine, saw, square, triangle)
   oscillator.rs    # Phase accumulator + linear interpolation
-  adsr.rs          # Attack / Decay / Sustain / Release envelope
+  adsr.rs          # ADSR envelope with live parameter setters
   keys.rs          # QWERTY → MIDI mapping (terminal only)
   wasm_synth.rs    # wasm-bindgen Synth wrapper (WASM only)
 web/
@@ -90,4 +92,4 @@ web/
 
 ## Theory
 
-See [WAVETABLE_THEORY.md](WAVETABLE_THEORY.md) for an explanation of wavetable synthesis, phase accumulation, interpolation, aliasing, and the signal flow used in this project.
+See [docs/WAVETABLE_THEORY.md](docs/WAVETABLE_THEORY.md) for an explanation of wavetable synthesis, phase accumulation, interpolation, aliasing, and the signal flow used in this project.

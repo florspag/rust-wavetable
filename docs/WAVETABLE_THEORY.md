@@ -23,6 +23,8 @@ The table index is then: `pos = phase × TABLE_SIZE`.
 
 This is called a **phasor** — a normalized ramp from 0→1 that drives the table read.
 
+The **frequency slider** in the browser GUI directly sets this value: dragging it changes `phase_inc`, which changes how fast the table cycles and therefore the pitch of the waveform. Unlike pressing a piano key, the slider uses `change_freq` which updates `phase_inc` without resetting the phase, so pitch slides smoothly without a click.
+
 ---
 
 ## Linear Interpolation
@@ -73,20 +75,49 @@ Triangle falls off as `1/n²` instead of `1/n`, so it aliases far less than saw 
 
 ---
 
+## ADSR Envelope
+
+The envelope shapes the amplitude of each note over time across four stages:
+
+```
+Amplitude
+  1.0 ┤    ●
+      │   ╱ ╲
+      │  ╱   ╲___________
+  S   │ ╱              ╲
+  0.0 ┼╱  A    D    S   R╲
+      └──────────────────────▶ time
+                ↑ note-off
+```
+
+| Stage | What happens |
+| ------- | ----------- |
+| **Attack** | Level rises from 0 → 1.0 over the attack time |
+| **Decay** | Level falls from 1.0 → sustain level |
+| **Sustain** | Level holds until note-off |
+| **Release** | Level falls back to 0 after note-off |
+
+Each rate is stored as `1 / (time_in_seconds × sample_rate)` — the amount the level changes per sample. This means shorter times produce larger rates and faster transitions.
+
+In the browser GUI the ADSR canvas lets you drag control points directly on the envelope curve. The yellow handle controls both decay time (drag X) and sustain level (drag Y). A dashed vertical line marks the note-off point. Positions use a square-root scale so short times remain easy to grab.
+
+---
+
 ## Signal Flow
 
 ```
-Keyboard → frequency
-    ↓
-set_freq()  →  phase_inc = freq / sr
-    ↓
-tick() called once per sample
-    ↓
-phase → table lookup + lerp → sample
-    ↓
-ADSR envelope → amplitude shaping
-    ↓
-Audio output
+Piano key OR frequency slider → frequency (Hz)
+            ↓
+  note_on: set_freq() resets phase + triggers envelope
+  slider:  change_freq() updates phase_inc only (no click, no retrigger)
+            ↓
+  tick() — called once per audio sample
+            ↓
+  phase → table index → linear interpolation → raw sample
+            ↓
+  ADSR envelope → amplitude × raw sample × 0.3
+            ↓
+  ScriptProcessorNode / cpal → speakers
 ```
 
 ---
