@@ -49,16 +49,18 @@ fn sinc_kernel(x: f32) -> f32 {
 
 The Blackman window reaches exactly 0 at `|x| = L`, so the first and last taps fade cleanly to zero.
 
-### Pre-computed look-up table
+### Pre-computed look-up table with row interpolation
 
-Calling `sin()` eight times per audio sample (× 8 voices = 64 calls per sample) is wasteful because the kernel shape only depends on the fractional position `t ∈ [0, 1)`. The kernel is pre-computed once at startup into a global table keyed by a quantized `t`:
+Calling `sin()` eight times per audio sample (× 8 voices = 64 calls per sample) is wasteful because the kernel shape only depends on the fractional position `t ∈ [0, 1)`. The kernel is pre-computed once at startup into a global table keyed by a quantized `t`.
+
+The table has **`SINC_TABLE_SIZE + 1` rows** — the extra row at `t = 1.0` lets the interpolation step safely read `row[qi + 1]` at the top of the range without a bounds check:
 
 ```rust
-const SINC_TABLE_SIZE: usize = 512;    // fractional subdivisions
+const SINC_TABLE_SIZE: usize = 512;  // fractional subdivisions
 static SINC_TABLE: OnceLock<Vec<[f32; SINC_TAPS]>> = OnceLock::new();
 
 fn build_sinc_table() -> Vec<[f32; SINC_TAPS]> {
-    (0..SINC_TABLE_SIZE).map(|qi| {
+    (0..=SINC_TABLE_SIZE).map(|qi| {          // 513 rows
         let t = qi as f32 / SINC_TABLE_SIZE as f32;
         let mut weights = [0.0f32; SINC_TAPS];
         for (j, k) in (-(SINC_L - 1)..=SINC_L).enumerate() {
@@ -69,25 +71,25 @@ fn build_sinc_table() -> Vec<[f32; SINC_TAPS]> {
 }
 ```
 
-512 entries × 8 weights × 4 bytes = **16 KB** — fits in L1 cache. `OnceLock` ensures the table is built exactly once and shared across all 8 voices.
+513 rows × 8 weights × 4 bytes = **~16 KB** — fits in L1 cache. `OnceLock` ensures the table is built exactly once and shared across all 8 voices.
 
 ### How `tick()` uses it
 
 ```rust
-let i0 = pos as usize % TABLE_SIZE;
-let t  = pos.fract();
-
-// quantize t → row index, fetch pre-computed 8 weights
-let weights = &SINC_TABLE[(t * SINC_TABLE_SIZE as f32) as usize];
+let frac_idx = t * SINC_TABLE_SIZE as f32;
+let qi    = frac_idx as usize;   // row below  — always < SINC_TABLE_SIZE since t < 1.0
+let alpha = frac_idx.fract();    // sub-row fraction ∈ [0, 1)
+let w0    = &SINC_TABLE[qi];
+let w1    = &SINC_TABLE[qi + 1]; // safe: table has SINC_TABLE_SIZE + 1 rows
 
 let mut s = 0.0f32;
 for (j, k) in (-(SINC_L - 1)..=SINC_L).enumerate() {  // k = −3 … +4
     let idx = ((i0 as isize + k).rem_euclid(TABLE_SIZE as isize)) as usize;
-    s += table[idx] * weights[j];
+    s += table[idx] * (w0[j] + alpha * (w1[j] - w0[j]));
 }
 ```
 
-All indices wrap via `rem_euclid` so the circular table boundary is seamless. The inner loop is now 8 multiplies + 8 adds — no transcendental functions at audio rate.
+Snapping to the nearest row would introduce a step error of up to `1 / (2 × SINC_TABLE_SIZE) ≈ 0.001` in the kernel argument. Interpolating between rows reduces this to the floating-point rounding error of the `frac_idx.fract()` computation — effectively zero. The extra cost is 8 multiply-adds for the weight lerp, still far cheaper than 8 `sin()` calls.
 
 ### Comparison of interpolation methods
 
@@ -96,7 +98,8 @@ All indices wrap via `rem_euclid` so the circular table boundary is seamless. Th
 | Truncate | 1 | C−1 (discontinuous) | Poor — steps alias | 0 extra ops |
 | Linear | 2 | C0 (value only) | ~−6 dB/oct rolloff | 1 multiply |
 | Catmull-Rom | 4 | C1 (value + slope) | Good at mid pitches | 4 multiplies, no trig |
-| Blackman-sinc + LUT | 8 | C∞ (ideal band-limit) | Excellent at all pitches | 8 multiplies, no trig |
+| Blackman-sinc + LUT (snap) | 8 | C∞ (ideal band-limit) | Excellent | 8 multiplies, no trig |
+| Blackman-sinc + LUT (lerp) | 8 | C∞ + sub-row smooth | Ideal | 16 multiplies, no trig |
 
 ---
 
@@ -255,7 +258,7 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 ## Where to Go Next
 
 1. **Multi-table mip-mapping** — generate one table per octave with harmonics capped at Nyquist for that octave, select the right table in `set_freq`.
-2. **Linear interpolation of LUT rows** — instead of snapping `t` to the nearest row in `SINC_TABLE`, linearly interpolate between two adjacent rows; removes the small quantisation error introduced by the 512-step table.
+2. **Increase LUT resolution** — raise `SINC_TABLE_SIZE` to 1024 or 4096 for even finer row granularity; the row-lerp already makes 512 more than sufficient for 24-bit audio.
 3. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution.
 4. **Unison / detune** — run two or more oscillators per voice with slight pitch offsets and mix them, classic for fat synth sounds.
 5. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.

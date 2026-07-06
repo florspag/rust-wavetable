@@ -19,7 +19,9 @@ fn sinc_kernel(x: f32) -> f32 {
 }
 
 fn build_sinc_table() -> Vec<[f32; SINC_TAPS]> {
-    (0..SINC_TABLE_SIZE).map(|qi| {
+    // SINC_TABLE_SIZE + 1 rows: the extra row at t=1.0 lets tick() safely
+    // interpolate between row[qi] and row[qi+1] without a bounds check.
+    (0..=SINC_TABLE_SIZE).map(|qi| {
         let t = qi as f32 / SINC_TABLE_SIZE as f32;
         let mut weights = [0.0f32; SINC_TAPS];
         for (j, k) in (-(SINC_L - 1)..=SINC_L).enumerate() {
@@ -87,13 +89,17 @@ impl Oscillator {
         let i0 = pos as usize % n;
         let t = pos.fract();
 
-        let weights = &SINC_TABLE.get_or_init(build_sinc_table)
-            [(t * SINC_TABLE_SIZE as f32) as usize];
+        let sinc_table = SINC_TABLE.get_or_init(build_sinc_table);
+        let frac_idx = t * SINC_TABLE_SIZE as f32;
+        let qi = frac_idx as usize;     // always < SINC_TABLE_SIZE since t < 1.0
+        let alpha = frac_idx.fract();   // sub-row fraction
+        let w0 = &sinc_table[qi];
+        let w1 = &sinc_table[qi + 1];  // safe: table has SINC_TABLE_SIZE + 1 rows
 
         let mut s = 0.0f32;
         for (j, k) in (-(SINC_L - 1)..=SINC_L).enumerate() {
             let idx = ((i0 as isize + k).rem_euclid(n as isize)) as usize;
-            s += table[idx] * weights[j];
+            s += table[idx] * (w0[j] + alpha * (w1[j] - w0[j]));
         }
 
         self.phase = (self.phase + self.phase_inc) % 1.0;
