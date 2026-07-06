@@ -370,6 +370,18 @@
       <canvas id="scope"></canvas>
     </div>
     <canvas id="wf-draw"></canvas>
+    <div class="flt-knobs" style="margin-top:0.6rem;">
+      <div class="knob-wrap">
+        <canvas class="knob-canvas" id="osc2-detune-knob"></canvas>
+        <span class="knob-label">Detune</span>
+        <span class="knob-val" id="osc2-detune-val">0¢</span>
+      </div>
+      <div class="knob-wrap">
+        <canvas class="knob-canvas" id="osc2-mix-knob"></canvas>
+        <span class="knob-label">Osc2 Mix</span>
+        <span class="knob-val" id="osc2-mix-val">0%</span>
+      </div>
+    </div>
   </div>
 
   <div class="two-col">
@@ -1240,6 +1252,22 @@
 
     drawFilterScope();
     new ResizeObserver(drawFilterScope).observe(fltScopeCanvas);
+
+    const detuneKnob = new Knob(document.getElementById('osc2-detune-knob'), {
+      min: 0, max: 100, value: 0, color: '#89b4fa',
+      onChange: cents => {
+        document.getElementById('osc2-detune-val').textContent = cents.toFixed(0) + '¢';
+        if (synth) synth.set_detune(cents);
+      },
+    });
+
+    const osc2MixKnob = new Knob(document.getElementById('osc2-mix-knob'), {
+      min: 0, max: 1, value: 0, color: '#89b4fa',
+      onChange: mix => {
+        document.getElementById('osc2-mix-val').textContent = (mix * 100).toFixed(0) + '%';
+        if (synth) synth.set_osc2_mix(mix);
+      },
+    });
   </script>
 </body>
 </html>

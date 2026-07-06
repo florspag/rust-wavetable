@@ -201,7 +201,7 @@ y[n] = b0·x[n] + b1·x[n−1] + b2·x[n−2] − a1·y[n−1] − a2·y[n−2]
 
 ## Polyphony and Voice Management
 
-The synth maintains **8 voices** running in parallel. Each voice owns its own `Oscillator` and `Adsr`; the `Filter` is shared and applied to the final mix.
+The synth maintains **8 voices** running in parallel. Each voice owns its own two `Oscillator` instances and an `Adsr`; the `Filter` is shared and applied to the final mix.
 
 ### Voice allocation
 
@@ -232,17 +232,46 @@ The `0.3` scale factor means a single voice (`0.3 × 1.0 = 0.3`) passes through 
 
 ---
 
+## Dual Oscillators per Voice
+
+Each `Voice` contains two independent `Oscillator` instances. They share the same wavetable and are pitched symmetrically around the played note using **detune** (in cents, 0–100):
+
+```
+osc1 frequency = freq × 2^(+cents / 2400)   ← slightly sharp
+osc2 frequency = freq ÷ 2^(+cents / 2400)   ← equally flat
+```
+
+Splitting the detune symmetrically keeps the perceived centre pitch locked to the played note. At 0 cents both oscillators are in perfect unison; at higher values they drift in and out of phase with each other, producing the classic **chorus / supersaw beating** effect.
+
+The two outputs are blended with **Osc2 Mix** (0–1) and normalised so total amplitude stays constant regardless of mix level:
+
+```
+osc_out = (osc1 + osc2 × mix) / (1 + mix)
+```
+
+| mix | result |
+| --- | ------ |
+| 0.0 | osc1 only (no detuned oscillator heard) |
+| 0.5 | osc1 at ⅔ level + osc2 at ⅓ level |
+| 1.0 | osc1 and osc2 at equal level (÷ 2) |
+
+The normalization denominator `(1 + mix)` ensures peak amplitude never increases when osc2 is blended in. With 8 voices × 2 oscillators the tanh soft-clipper in the final mix stage still handles any transient excess.
+
+---
+
 ## Signal Flow
 
 ```
 Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(freq)
                         ↓                                           ↓
-               Voice[0..8] allocated or stolen          updates phase_inc only
-               each voice: Oscillator + Adsr                  (no phase reset,
+               Voice[0..8] allocated or stolen          updates both osc phase_incs
+               each voice: osc1 + osc2 + Adsr                (no phase reset,
                         ↓                                      no click)
   per-voice tick():
-    phase → table lookup → linear interp → raw sample
-    raw sample × ADSR envelope level
+    osc1: freq × detune_ratio  →  sinc LUT  →  s1
+    osc2: freq ÷ detune_ratio  →  sinc LUT  →  s2
+    osc_out = (s1 + s2 × mix) / (1 + mix)   ← amplitude-normalised blend
+    osc_out × ADSR envelope level
                         ↓
        sum all 8 voices
                         ↓
@@ -260,5 +289,5 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 1. **Multi-table mip-mapping** — generate one table per octave with harmonics capped at Nyquist for that octave, select the right table in `set_freq`.
 2. **Increase LUT resolution** — raise `SINC_TABLE_SIZE` to 1024 or 4096 for even finer row granularity; the row-lerp already makes 512 more than sufficient for 24-bit audio.
 3. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution.
-4. **Unison / detune** — run two or more oscillators per voice with slight pitch offsets and mix them, classic for fat synth sounds.
+4. **Independent osc2 waveform** — give each voice's second oscillator its own waveform selector; e.g. osc1 = Saw + osc2 = Square for thick layered timbres.
 5. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.
