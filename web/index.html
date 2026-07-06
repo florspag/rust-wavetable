@@ -86,63 +86,26 @@
       font-weight: bold;
     }
 
-    /* ADSR */
-    .adsr-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1rem;
+    /* ADSR canvas */
+    #adsr-canvas {
+      display: block;
+      width: 100%;
+      height: 140px;
+      border-radius: 4px;
+      background: #11111b;
+      cursor: default;
     }
 
-    .adsr-knob {
+    .adsr-vals {
       display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.4rem;
-    }
-
-    .adsr-label {
-      font-size: 0.65rem;
-      color: #6c7086;
-      text-transform: uppercase;
-      letter-spacing: 0.15em;
-    }
-
-    .adsr-value {
+      justify-content: space-around;
+      margin-top: 0.6rem;
       font-size: 0.7rem;
-      color: #89b4fa;
-      min-height: 1rem;
+      color: #585b70;
     }
 
-    input[type=range] {
-      -webkit-appearance: none;
-      appearance: none;
-      writing-mode: vertical-lr;
-      direction: rtl;
-      width: 6px;
-      height: 90px;
-      background: #313244;
-      border-radius: 3px;
-      outline: none;
-      cursor: pointer;
-    }
-
-    input[type=range]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      width: 16px;
-      height: 16px;
-      background: #89b4fa;
-      border-radius: 50%;
-      border: 2px solid #0f0f1a;
-      box-shadow: 0 0 6px #89b4fa55;
-    }
-
-    input[type=range]::-moz-range-thumb {
-      width: 16px;
-      height: 16px;
-      background: #89b4fa;
-      border-radius: 50%;
-      border: 2px solid #0f0f1a;
-    }
+    .adsr-vals span { text-align: center; }
+    .adsr-vals b { display: block; font-weight: normal; }
 
     /* Piano */
     .piano-wrap {
@@ -246,28 +209,13 @@
   </div>
 
   <div class="panel">
-    <div class="panel-title">ADSR Envelope</div>
-    <div class="adsr-grid">
-      <div class="adsr-knob">
-        <div class="adsr-label">Attack</div>
-        <input type="range" id="attack" min="5" max="2000" value="10" step="1">
-        <div class="adsr-value" id="attack-val">10ms</div>
-      </div>
-      <div class="adsr-knob">
-        <div class="adsr-label">Decay</div>
-        <input type="range" id="decay" min="5" max="3000" value="150" step="1">
-        <div class="adsr-value" id="decay-val">150ms</div>
-      </div>
-      <div class="adsr-knob">
-        <div class="adsr-label">Sustain</div>
-        <input type="range" id="sustain" min="0" max="100" value="70" step="1">
-        <div class="adsr-value" id="sustain-val">70%</div>
-      </div>
-      <div class="adsr-knob">
-        <div class="adsr-label">Release</div>
-        <input type="range" id="release" min="5" max="5000" value="400" step="1">
-        <div class="adsr-value" id="release-val">400ms</div>
-      </div>
+    <div class="panel-title">ADSR Envelope — drag handles to edit</div>
+    <canvas id="adsr-canvas"></canvas>
+    <div class="adsr-vals">
+      <span>A<b id="av">10ms</b></span>
+      <span>D<b id="dv">150ms</b></span>
+      <span>S<b id="sv">70%</b></span>
+      <span>R<b id="rv">400ms</b></span>
     </div>
   </div>
 
@@ -485,21 +433,246 @@
       });
     });
 
-    // ── ADSR sliders ────────────────────────────────────────────────────
-    function slider(id, valId, transform, setter, fmt) {
-      const el = document.getElementById(id);
-      const valEl = document.getElementById(valId);
-      el.addEventListener('input', () => {
-        const v = parseFloat(el.value);
-        valEl.textContent = fmt(v);
-        if (synth) setter(transform(v));
+    // ── ADSR interactive canvas ─────────────────────────────────────────
+    const adsrCanvas = document.getElementById('adsr-canvas');
+    const adsrCtx = adsrCanvas.getContext('2d');
+
+    // Current ADSR state (ms / 0-1 level)
+    const env = {
+      attack:  { ms: 10,  max: 2000, min: 5 },
+      decay:   { ms: 150, max: 3000, min: 5 },
+      sustain: { level: 0.7 },
+      release: { ms: 400, max: 5000, min: 5 },
+    };
+
+    // sqrt scale → short values stay easy to grab
+    function toT(ms, max)      { return Math.sqrt(ms / max); }
+    function fromT(t, max, min){ return Math.max(min, Math.round(t * t * max)); }
+
+    // CSS-pixel layout (width adapts, height is fixed)
+    function layout() {
+      const W = adsrCanvas.offsetWidth;
+      const H = 140;
+      const px = 14, py = 22;
+      const usable = W - 2 * px;
+      const seg = usable / 4;
+      return {
+        W, H, px, py,
+        top: py, bot: H - py, seg,
+        xA: px,             // attack seg start
+        xB: px + seg,       // decay  seg start
+        xC: px + seg * 2,   // hold   seg start  (note-off line)
+        xD: px + seg * 3,   // release seg start
+        xE: px + seg * 4,   // end
+      };
+    }
+
+    // The three draggable handle positions (CSS px)
+    function handles(L) {
+      const amp = L.bot - L.top;
+      return {
+        p1: { x: L.xA + toT(env.attack.ms,  env.attack.max)  * L.seg, y: L.top,                                     id: 'attack',        color: '#a6e3a1' },
+        p2: { x: L.xB + toT(env.decay.ms,   env.decay.max)   * L.seg, y: L.top + (1 - env.sustain.level) * amp,     id: 'decay+sustain', color: '#f9e2af' },
+        p4: { x: L.xD + toT(env.release.ms, env.release.max) * L.seg, y: L.bot,                                     id: 'release',       color: '#f38ba8' },
+      };
+    }
+
+    let adsrHover = null, adsrDrag = null;
+
+    function drawADSR() {
+      const L = layout();
+      // Resize backing buffer to match CSS size × DPR
+      const dpr = window.devicePixelRatio || 1;
+      if (adsrCanvas.width !== Math.round(L.W * dpr)) {
+        adsrCanvas.width  = Math.round(L.W * dpr);
+        adsrCanvas.height = Math.round(L.H * dpr);
+        adsrCtx.scale(dpr, dpr);
+      }
+
+      const { p1, p2, p4 } = handles(L);
+      const p0 = { x: L.xA, y: L.bot };
+      const p3 = { x: L.xC, y: p2.y  }; // note-off = start of release
+
+      adsrCtx.clearRect(0, 0, L.W, L.H);
+      adsrCtx.fillStyle = '#11111b';
+      adsrCtx.fillRect(0, 0, L.W, L.H);
+
+      // Segment tint bands
+      const bands = ['#a6e3a108','#f9e2af08','#cba6f708','#f38ba808'];
+      bands.forEach((c, i) => {
+        adsrCtx.fillStyle = c;
+        adsrCtx.fillRect(L.xA + L.seg * i, L.top - 4, L.seg, L.bot - L.top + 8);
+      });
+
+      // Segment labels (top)
+      const lbls = [['A','#a6e3a1'],['D','#f9e2af'],['S','#cba6f7'],['R','#f38ba8']];
+      adsrCtx.font = '10px Courier New';
+      adsrCtx.textAlign = 'center';
+      lbls.forEach(([t, c], i) => {
+        adsrCtx.fillStyle = c;
+        adsrCtx.fillText(t, L.xA + L.seg * i + L.seg / 2, L.top - 8);
+      });
+
+      // Segment dividers
+      adsrCtx.strokeStyle = '#2a2a3e';
+      adsrCtx.lineWidth = 1;
+      [L.xB, L.xC, L.xD].forEach(x => {
+        adsrCtx.beginPath();
+        adsrCtx.moveTo(x, L.top - 4);
+        adsrCtx.lineTo(x, L.bot + 4);
+        adsrCtx.stroke();
+      });
+
+      // Note-off marker (dashed, at xC)
+      adsrCtx.setLineDash([3, 4]);
+      adsrCtx.strokeStyle = '#45475a';
+      adsrCtx.lineWidth = 1;
+      adsrCtx.beginPath();
+      adsrCtx.moveTo(L.xC, L.top - 4);
+      adsrCtx.lineTo(L.xC, L.bot + 4);
+      adsrCtx.stroke();
+      adsrCtx.setLineDash([]);
+
+      // Filled area under envelope
+      adsrCtx.fillStyle = '#89b4fa14';
+      adsrCtx.beginPath();
+      adsrCtx.moveTo(p0.x, p0.y);
+      adsrCtx.lineTo(p1.x, p1.y);
+      adsrCtx.lineTo(p2.x, p2.y);
+      adsrCtx.lineTo(p3.x, p3.y);
+      adsrCtx.lineTo(p4.x, p4.y);
+      adsrCtx.lineTo(p4.x, L.bot);
+      adsrCtx.closePath();
+      adsrCtx.fill();
+
+      // Envelope line
+      adsrCtx.strokeStyle = '#89b4fa';
+      adsrCtx.lineWidth = 2;
+      adsrCtx.lineJoin = 'round';
+      adsrCtx.beginPath();
+      adsrCtx.moveTo(p0.x, p0.y);
+      adsrCtx.lineTo(p1.x, p1.y);
+      adsrCtx.lineTo(p2.x, p2.y);
+      adsrCtx.lineTo(p3.x, p3.y);
+      adsrCtx.lineTo(p4.x, p4.y);
+      adsrCtx.stroke();
+
+      // Handles
+      [p1, p2, p4].forEach(p => {
+        const active = adsrDrag === p.id || adsrHover === p.id;
+        adsrCtx.shadowColor = p.color;
+        adsrCtx.shadowBlur  = active ? 14 : 5;
+        adsrCtx.fillStyle   = p.color;
+        adsrCtx.beginPath();
+        adsrCtx.arc(p.x, p.y, active ? 8 : 6, 0, Math.PI * 2);
+        adsrCtx.fill();
+        adsrCtx.shadowBlur = 0;
+      });
+
+      // Value labels near handles
+      adsrCtx.font = '9px Courier New';
+      adsrCtx.textAlign = 'center';
+      const valLbls = [
+        [p1, env.attack.ms + 'ms'],
+        [p2, env.decay.ms + 'ms · ' + Math.round(env.sustain.level * 100) + '%'],
+        [p4, env.release.ms + 'ms'],
+      ];
+      valLbls.forEach(([p, txt]) => {
+        adsrCtx.fillStyle = p.color + 'cc';
+        const ly = p.y < L.top + 18 ? p.y + 16 : p.y - 11;
+        adsrCtx.fillText(txt, Math.max(30, Math.min(L.W - 30, p.x)), ly);
       });
     }
 
-    slider('attack',  'attack-val',  v => v / 1000, s => synth.set_attack(s),  v => v + 'ms');
-    slider('decay',   'decay-val',   v => v / 1000, s => synth.set_decay(s),   v => v + 'ms');
-    slider('sustain', 'sustain-val', v => v / 100,  s => synth.set_sustain(s), v => v + '%');
-    slider('release', 'release-val', v => v / 1000, s => synth.set_release(s), v => v + 'ms');
+    function adsrPointerPos(e) {
+      const rect = adsrCanvas.getBoundingClientRect();
+      return [
+        (e.clientX - rect.left) * (adsrCanvas.offsetWidth  / rect.width),
+        (e.clientY - rect.top)  * (adsrCanvas.offsetHeight / rect.height),
+      ];
+    }
+
+    function hitTest(mx, my) {
+      const L = layout();
+      const { p1, p2, p4 } = handles(L);
+      const R = 14;
+      for (const p of [p1, p2, p4]) {
+        if (Math.hypot(mx - p.x, my - p.y) < R) return p.id;
+      }
+      return null;
+    }
+
+    function applyDrag(id, mx, my) {
+      const L = layout();
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+      if (id === 'attack') {
+        const t = clamp((mx - L.xA) / L.seg, 0, 1);
+        env.attack.ms = fromT(t, env.attack.max, env.attack.min);
+        if (synth) synth.set_attack(env.attack.ms / 1000);
+        document.getElementById('av').textContent = env.attack.ms + 'ms';
+      } else if (id === 'decay+sustain') {
+        const tx = clamp((mx - L.xB) / L.seg, 0, 1);
+        env.decay.ms = fromT(tx, env.decay.max, env.decay.min);
+        const ty = clamp((my - L.top) / (L.bot - L.top), 0, 1);
+        env.sustain.level = Math.round((1 - ty) * 100) / 100;
+        if (synth) { synth.set_decay(env.decay.ms / 1000); synth.set_sustain(env.sustain.level); }
+        document.getElementById('dv').textContent = env.decay.ms + 'ms';
+        document.getElementById('sv').textContent = Math.round(env.sustain.level * 100) + '%';
+      } else if (id === 'release') {
+        const t = clamp((mx - L.xD) / L.seg, 0, 1);
+        env.release.ms = fromT(t, env.release.max, env.release.min);
+        if (synth) synth.set_release(env.release.ms / 1000);
+        document.getElementById('rv').textContent = env.release.ms + 'ms';
+      }
+      drawADSR();
+    }
+
+    adsrCanvas.addEventListener('mousedown', e => {
+      const [mx, my] = adsrPointerPos(e);
+      adsrDrag = hitTest(mx, my);
+      if (adsrDrag) { e.preventDefault(); applyDrag(adsrDrag, mx, my); }
+    });
+
+    window.addEventListener('mousemove', e => {
+      const [mx, my] = adsrPointerPos(e);
+      if (adsrDrag) { applyDrag(adsrDrag, mx, my); return; }
+      const h = hitTest(mx, my);
+      if (h !== adsrHover) {
+        adsrHover = h;
+        adsrCanvas.style.cursor = h ? 'grab' : 'default';
+        drawADSR();
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (adsrDrag) { adsrDrag = null; adsrCanvas.style.cursor = adsrHover ? 'grab' : 'default'; drawADSR(); }
+    });
+
+    adsrCanvas.addEventListener('touchstart', e => {
+      const t = e.touches[0];
+      const rect = adsrCanvas.getBoundingClientRect();
+      const mx = (t.clientX - rect.left) * (adsrCanvas.offsetWidth / rect.width);
+      const my = (t.clientY - rect.top)  * (adsrCanvas.offsetHeight / rect.height);
+      adsrDrag = hitTest(mx, my);
+      if (adsrDrag) { e.preventDefault(); applyDrag(adsrDrag, mx, my); }
+    }, { passive: false });
+
+    adsrCanvas.addEventListener('touchmove', e => {
+      if (!adsrDrag) return;
+      e.preventDefault();
+      const t = e.touches[0];
+      const rect = adsrCanvas.getBoundingClientRect();
+      const mx = (t.clientX - rect.left) * (adsrCanvas.offsetWidth / rect.width);
+      const my = (t.clientY - rect.top)  * (adsrCanvas.offsetHeight / rect.height);
+      applyDrag(adsrDrag, mx, my);
+    }, { passive: false });
+
+    adsrCanvas.addEventListener('touchend', () => { adsrDrag = null; drawADSR(); });
+
+    // Initial draw + redraw on resize
+    drawADSR();
+    new ResizeObserver(drawADSR).observe(adsrCanvas);
   </script>
 </body>
 </html>
