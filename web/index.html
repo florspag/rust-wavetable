@@ -49,31 +49,30 @@
       margin-bottom: 1rem;
     }
 
-    /* Oscilloscope */
-    #scope {
-      display: block;
-      width: 100%;
-      height: 100px;
-      border-radius: 4px;
-      background: #11111b;
+    /* Waveform + oscilloscope row */
+    .wf-osc {
+      display: flex;
+      gap: 0.75rem;
+      align-items: stretch;
     }
 
-    /* Waveform selector */
     .wf-buttons {
       display: flex;
-      gap: 0.5rem;
+      flex-direction: column;
+      gap: 0.3rem;
+      flex-shrink: 0;
     }
 
     .wf-btn {
-      flex: 1;
-      padding: 0.55rem 0.25rem;
+      padding: 0.3rem 0.6rem;
       background: #1e1e2e;
       border: 1px solid #313244;
-      border-radius: 5px;
+      border-radius: 4px;
       color: #a6adc8;
       font-family: inherit;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       cursor: pointer;
+      text-align: left;
       transition: background 0.1s, color 0.1s, border-color 0.1s;
     }
 
@@ -86,23 +85,32 @@
       font-weight: bold;
     }
 
+    #scope {
+      display: block;
+      flex: 1;
+      height: 70px;
+      border-radius: 4px;
+      background: #11111b;
+    }
+
     /* Frequency panel */
-    .freq-display {
-      text-align: center;
-      margin-bottom: 1rem;
+    .freq-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.4rem;
     }
 
     .freq-hz {
-      font-size: 2.2rem;
+      font-size: 1.1rem;
       color: #89b4fa;
-      letter-spacing: 0.05em;
+      white-space: nowrap;
     }
 
     .freq-note {
-      font-size: 0.85rem;
-      color: #a6adc8;
-      margin-top: 0.2rem;
-      min-height: 1.2em;
+      font-size: 0.75rem;
+      color: #6c7086;
+      white-space: nowrap;
     }
 
     #freq-slider {
@@ -276,25 +284,23 @@
   <p id="status">Click a key to start audio...</p>
 
   <div class="panel">
-    <div class="panel-title">Oscilloscope</div>
-    <canvas id="scope"></canvas>
-  </div>
-
-  <div class="panel">
-    <div class="panel-title">Waveform</div>
-    <div class="wf-buttons">
-      <button class="wf-btn active" data-idx="0">Sine</button>
-      <button class="wf-btn"        data-idx="1">Sawtooth</button>
-      <button class="wf-btn"        data-idx="2">Square</button>
-      <button class="wf-btn"        data-idx="3">Triangle</button>
+    <div class="panel-title">Waveform &amp; Oscilloscope</div>
+    <div class="wf-osc">
+      <div class="wf-buttons">
+        <button class="wf-btn active" data-idx="0">Sine</button>
+        <button class="wf-btn"        data-idx="1">Sawtooth</button>
+        <button class="wf-btn"        data-idx="2">Square</button>
+        <button class="wf-btn"        data-idx="3">Triangle</button>
+      </div>
+      <canvas id="scope"></canvas>
     </div>
   </div>
 
   <div class="panel">
     <div class="panel-title">Frequency</div>
-    <div class="freq-display">
-      <div class="freq-hz" id="freq-hz">440.0 Hz</div>
-      <div class="freq-note" id="freq-note">A4</div>
+    <div class="freq-row">
+      <span class="freq-hz" id="freq-hz">440.0 Hz</span>
+      <span class="freq-note" id="freq-note">A4</span>
     </div>
     <input type="range" id="freq-slider" min="0" max="1000" value="500">
     <div class="freq-range-labels"><span>20 Hz</span><span>4000 Hz</span></div>
@@ -445,6 +451,7 @@
 
     document.getElementById('freq-slider').addEventListener('input', e => {
       const freq = sliderToFreq(parseInt(e.target.value));
+      currentFreq = freq;
       setFreqDisplay(freq);
       startAudio().then(() => { if (synth) synth.change_freq(freq); });
     });
@@ -460,6 +467,7 @@
     let activeWave = 0;
     let isPlaying = false;
     let scopeOffset = 0;
+    let currentFreq = 440;
 
     // ── Oscilloscope ────────────────────────────────────────────────────
     const scopeCanvas = document.getElementById('scope');
@@ -484,11 +492,11 @@
       scopeCtx.lineTo(W, H / 2);
       scopeCtx.stroke();
 
-      // waveform
+      // waveform — cycles scale with frequency so pitch changes are visible
       scopeCtx.strokeStyle = isPlaying ? '#89b4fa' : '#585b70';
       scopeCtx.lineWidth = 2;
       scopeCtx.beginPath();
-      const cycles = 3;
+      const cycles = 1 + 14 * (Math.log2(Math.max(20, currentFreq)) - Math.log2(20)) / (Math.log2(4000) - Math.log2(20));
       for (let x = 0; x <= W; x++) {
         const t = ((x / W) * cycles + scopeOffset) % 1;
         const amp = WAVE_FNS[activeWave](t);
@@ -536,6 +544,7 @@
         const freq = midiFreq(midi);
         synth.note_on(freq);
         isPlaying = true;
+        currentFreq = freq;
         syncSliderToFreq(freq);
         noteDisplay.textContent = `${midiName(midi)}  ·  ${freq.toFixed(1)} Hz`;
         document.querySelectorAll('[data-midi]').forEach(el => {
