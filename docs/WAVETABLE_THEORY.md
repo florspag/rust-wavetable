@@ -234,7 +234,7 @@ The `0.3` scale factor means a single voice (`0.3 × 1.0 = 0.3`) passes through 
 
 ## Dual Oscillators per Voice
 
-Each `Voice` contains two independent `Oscillator` instances. They share the same wavetable and are pitched symmetrically around the played note using **detune** (in cents, 0–100):
+Each `Voice` contains two independent `Oscillator` instances. Each oscillator has its own wavetable selection (set via `set_waveform` for osc1, `set_osc2_waveform` for osc2) and is pitched symmetrically around the played note using **detune** (in cents, 0–100):
 
 ```
 osc1 frequency = freq × 2^(+cents / 2400)   ← slightly sharp
@@ -256,6 +256,10 @@ osc_out = (osc1 + osc2 × mix) / (1 + mix)
 | 1.0 | osc1 and osc2 at equal level (÷ 2) |
 
 The normalization denominator `(1 + mix)` ensures peak amplitude never increases when osc2 is blended in. With 8 voices × 2 oscillators the tanh soft-clipper in the final mix stage still handles any transient excess.
+
+### Waveform selection
+
+The browser GUI shows two labelled rows of waveform buttons — **Osc 1** (blue highlight) and **Osc 2** (green highlight). Selecting different shapes in each row layers two timbres; classic combinations include Saw + Square for a dense analogue texture, or Sine + Organ for a softer layered pad. When either row selects **Custom**, the user-drawn table in slot 7 is used for that oscillator.
 
 ---
 
@@ -289,5 +293,5 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 1. **Multi-table mip-mapping** — generate one table per octave with harmonics capped at Nyquist for that octave, select the right table in `set_freq`.
 2. **Increase LUT resolution** — raise `SINC_TABLE_SIZE` to 1024 or 4096 for even finer row granularity; the row-lerp already makes 512 more than sufficient for 24-bit audio.
 3. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution.
-4. **Independent osc2 waveform** — give each voice's second oscillator its own waveform selector; e.g. osc1 = Saw + osc2 = Square for thick layered timbres.
+4. **Osc2 Custom draw** — expose a second draw canvas dedicated to osc2 so both oscillators can have distinct user-drawn waveforms simultaneously.
 5. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.

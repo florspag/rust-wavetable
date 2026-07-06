@@ -99,6 +99,20 @@
       font-weight: bold;
     }
 
+    #osc2-wf .wf-btn.active {
+      background: #1a2e1a;
+      border-color: #a6e3a1;
+      color: #a6e3a1;
+    }
+
+    .osc-row-label {
+      font-size: 0.7rem;
+      color: #6c7086;
+      margin-bottom: 0.25rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
     #scope {
       display: block;
       flex: 1;
@@ -357,7 +371,19 @@
   <div class="panel">
     <div class="panel-title">Waveform &amp; Oscilloscope</div>
     <div class="wf-osc">
-      <div class="wf-buttons">
+      <div class="osc-row-label">Osc 1</div>
+      <div class="wf-buttons" id="osc1-wf">
+        <button class="wf-btn active" data-idx="0">Sine</button>
+        <button class="wf-btn"        data-idx="1">Sawtooth</button>
+        <button class="wf-btn"        data-idx="2">Square</button>
+        <button class="wf-btn"        data-idx="3">Triangle</button>
+        <button class="wf-btn"        data-idx="4">Pulse</button>
+        <button class="wf-btn"        data-idx="5">Organ</button>
+        <button class="wf-btn"        data-idx="6">Additive</button>
+        <button class="wf-btn"        data-idx="7">Custom</button>
+      </div>
+      <div class="osc-row-label" style="margin-top:0.5rem;">Osc 2</div>
+      <div class="wf-buttons" id="osc2-wf">
         <button class="wf-btn active" data-idx="0">Sine</button>
         <button class="wf-btn"        data-idx="1">Sawtooth</button>
         <button class="wf-btn"        data-idx="2">Square</button>
@@ -682,11 +708,12 @@
     });
 
     // ── Waveform buttons ────────────────────────────────────────────────
-    document.querySelectorAll('.wf-btn').forEach(btn => {
+    const osc1Btns = document.querySelectorAll('#osc1-wf .wf-btn');
+    osc1Btns.forEach(btn => {
       btn.addEventListener('click', () => {
         const idx = parseInt(btn.dataset.idx);
         activeWave = idx;
-        document.querySelectorAll('.wf-btn').forEach(b => b.classList.remove('active'));
+        osc1Btns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         if (idx === 7) {
           drawCanvas.classList.add('active');
@@ -696,6 +723,15 @@
           drawCanvas.classList.remove('active');
           if (synth) synth.set_waveform(idx);
         }
+      });
+    });
+
+    const osc2Btns = document.querySelectorAll('#osc2-wf .wf-btn');
+    osc2Btns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        osc2Btns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        if (synth) synth.set_osc2_waveform(parseInt(btn.dataset.idx));
       });
     });
 

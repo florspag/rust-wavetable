@@ -119,6 +119,11 @@ impl Synth {
     pub fn set_waveform(&mut self, idx: u32) {
         for v in self.voices.iter_mut() {
             v.osc1.set_waveform(idx as usize);
+        }
+    }
+
+    pub fn set_osc2_waveform(&mut self, idx: u32) {
+        for v in self.voices.iter_mut() {
             v.osc2.set_waveform(idx as usize);
         }
     }
