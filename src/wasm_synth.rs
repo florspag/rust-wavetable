@@ -66,6 +66,10 @@ impl Synth {
         self.env.set_release(secs);
     }
 
+    pub fn load_custom_table(&mut self, samples: &[f32]) {
+        self.osc.load_custom_table(samples);
+    }
+
     pub fn set_filter_cutoff(&mut self, hz: f32) {
         self.filter.set_cutoff(hz);
     }
