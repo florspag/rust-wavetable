@@ -100,3 +100,5 @@ web/
 ## Theory
 
 See [docs/WAVETABLE_THEORY.md](docs/WAVETABLE_THEORY.md) for an explanation of wavetable synthesis, phase accumulation, interpolation, aliasing, and the signal flow used in this project.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a Mermaid block diagram of the full signal flow (renders on GitHub).
