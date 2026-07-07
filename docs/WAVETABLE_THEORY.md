@@ -190,13 +190,14 @@ Triangle falls off as `1/n²` so it aliases far less than saw or square at any g
 
 ### Custom wavetable
 
-The browser GUI provides a draw canvas (shown when **Custom** is selected). The user drags to sculpt one full cycle; on release the browser resamples the drawing to 2048 `Float32` samples and sends them to the WASM synth via:
+Each oscillator has its own independent draw canvas, revealed when that oscillator's **Custom** button is selected. The user drags to sculpt one full cycle; on release the browser resamples the drawing to 2048 `Float32` samples and routes it to the correct WASM method — `load_osc1_custom_table` or `load_osc2_custom_table`:
 
 ```text
-JS Float32Array  →  wasm-bindgen  →  &[f32]  →  resample to TABLE_SIZE  →  tables[7]
+JS Float32Array  →  wasm-bindgen  →  &[f32]  →  resample to TABLE_SIZE  →  osc1.custom_table
+                                                                        or  osc2.custom_table
 ```
 
-The Rust side resamples the input to exactly TABLE_SIZE entries using the same linear interpolation used during playback, so any input length works.
+Both canvases can be visible simultaneously when both oscillators are set to Custom, so Osc 1 and Osc 2 can each hold a distinct user-drawn waveform at the same time. The Rust side resamples the input to exactly TABLE_SIZE entries using linear interpolation, so any input length works.
 
 ---
 
@@ -311,7 +312,7 @@ The normalization denominator `(1 + mix)` ensures peak amplitude never increases
 
 ### Waveform selection
 
-The browser GUI shows two labelled rows of waveform buttons — **Osc 1** (blue highlight) and **Osc 2** (green highlight). Selecting different shapes in each row layers two timbres; classic combinations include Saw + Square for a dense analogue texture, or Sine + Organ for a softer layered pad. When either row selects **Custom**, the user-drawn table in slot 7 is used for that oscillator.
+The browser GUI shows two labelled rows of waveform buttons — **Osc 1** (blue highlight) and **Osc 2** (green highlight). Selecting different shapes in each row layers two timbres; classic combinations include Saw + Square for a dense analogue texture, or Sine + Organ for a softer layered pad. When a row selects **Custom**, a dedicated draw canvas appears below for that oscillator; each oscillator stores its waveform in its own `custom_table` field (`osc1.custom_table` / `osc2.custom_table`), so both can hold different user-drawn shapes simultaneously.
 
 ---
 
@@ -345,5 +346,4 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 1. **Unison / supersaw** — spawn N detuned oscillators per voice (typically 4–8) with randomised initial phases and spread across the stereo field; gives the dense "supersaw" lead sound found in classic analogue polysynths.
 2. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be an LFO target.
 3. **LFO** — a low-frequency oscillator (0.01–20 Hz) that modulates pitch, filter cutoff, or oscillator mix over time; the same `Oscillator` struct can be reused at a very low `phase_inc`.
-4. **Osc2 Custom draw** — expose a second draw canvas dedicated to osc2 so both oscillators can have distinct user-drawn waveforms simultaneously.
-5. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.
+4. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.
