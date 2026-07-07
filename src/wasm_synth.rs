@@ -128,9 +128,14 @@ impl Synth {
         }
     }
 
-    pub fn load_custom_table(&mut self, samples: &[f32]) {
+    pub fn load_osc1_custom_table(&mut self, samples: &[f32]) {
         for v in self.voices.iter_mut() {
             v.osc1.load_custom_table(samples);
+        }
+    }
+
+    pub fn load_osc2_custom_table(&mut self, samples: &[f32]) {
+        for v in self.voices.iter_mut() {
             v.osc2.load_custom_table(samples);
         }
     }

@@ -121,18 +121,21 @@
       background: #11111b;
     }
 
-    #wf-draw {
+    .custom-draw-wrap {
       display: none;
+      margin-top: 0.5rem;
+    }
+    .custom-draw-wrap.active { display: block; }
+    #wf-draw, #wf-draw2 {
+      display: block;
       width: 100%;
       height: 80px;
       background: #11111b;
       border-radius: 4px;
-      margin-top: 0.6rem;
+      margin-top: 0.3rem;
       cursor: crosshair;
       touch-action: none;
     }
-
-    #wf-draw.active { display: block; }
 
     /* Filter panel */
     .flt-row {
@@ -395,7 +398,14 @@
       </div>
       <canvas id="scope"></canvas>
     </div>
-    <canvas id="wf-draw"></canvas>
+    <div id="wf-draw1-wrap" class="custom-draw-wrap">
+      <div class="osc-row-label">Osc 1 — Custom</div>
+      <canvas id="wf-draw"></canvas>
+    </div>
+    <div id="wf-draw2-wrap" class="custom-draw-wrap">
+      <div class="osc-row-label">Osc 2 — Custom</div>
+      <canvas id="wf-draw2"></canvas>
+    </div>
     <div class="flt-knobs" style="margin-top:0.6rem;">
       <div class="knob-wrap">
         <canvas class="knob-canvas" id="osc2-detune-knob"></canvas>
@@ -578,9 +588,9 @@
     const OSC_BUF_SIZE = 4096; // must be a power of 2
     const oscRingBuf = new Float32Array(OSC_BUF_SIZE);
     let oscWritePos = 0;
-    let customDrawValues = null;
-    let customTableLoaded = false;
-    const drawCanvas = document.getElementById('wf-draw');
+    let osc1Draw, osc2Draw;
+    const drawCanvas  = document.getElementById('wf-draw');
+    const drawCanvas2 = document.getElementById('wf-draw2');
 
     // ── Oscilloscope ────────────────────────────────────────────────────
     const scopeCanvas = document.getElementById('scope');
@@ -635,13 +645,14 @@
       } else {
         // ── Mathematical preview (before audio starts) ───────────────────
         const cycles = 1 + 14 * (Math.log2(Math.max(20, currentFreq)) - Math.log2(20)) / (Math.log2(4000) - Math.log2(20));
+        const _cv = osc1Draw && osc1Draw.getValues();
         for (let x = 0; x <= W; x++) {
           const t = ((x / W) * cycles + scopeOffset) % 1;
           let amp;
-          if (activeWave === 7 && customDrawValues) {
-            const pos = t * customDrawValues.length;
-            const ci = Math.floor(pos) % customDrawValues.length;
-            amp = customDrawValues[ci] + (pos % 1) * (customDrawValues[(ci + 1) % customDrawValues.length] - customDrawValues[ci]);
+          if (activeWave === 7 && _cv) {
+            const pos = t * _cv.length;
+            const ci = Math.floor(pos) % _cv.length;
+            amp = _cv[ci] + (pos % 1) * (_cv[(ci + 1) % _cv.length] - _cv[ci]);
           } else {
             amp = WAVE_FNS[Math.min(activeWave, 6)](t);
           }
@@ -743,6 +754,117 @@
       noteOff(midi);
     });
 
+    // ── Custom wavetable draw ────────────────────────────────────────────
+    function makeDrawController(canvas, onSend) {
+      const ctx = canvas.getContext('2d');
+      let values = null, loaded = false, drawing = false, lastX = null;
+
+      function init() {
+        const W = canvas.offsetWidth || 512;
+        if (!values || values.length !== W) values = new Float32Array(W);
+      }
+
+      function render() {
+        init();
+        const W = canvas.offsetWidth || 512, H = canvas.offsetHeight || 80;
+        const dpr = window.devicePixelRatio || 1;
+        if (canvas.width !== Math.round(W * dpr)) {
+          canvas.width = Math.round(W * dpr);
+          canvas.height = Math.round(H * dpr);
+          ctx.scale(dpr, dpr);
+        }
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = '#11111b'; ctx.fillRect(0, 0, W, H);
+        ctx.strokeStyle = '#2a2a3e'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke();
+        if (!values || values.every(v => v === 0)) {
+          ctx.fillStyle = '#45475a'; ctx.font = '11px Courier New'; ctx.textAlign = 'center';
+          ctx.fillText('drag to draw a waveform', W/2, H/2 - 6);
+        } else {
+          ctx.strokeStyle = '#a6e3a1'; ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let x = 0; x < W; x++) {
+            const y = H/2 - values[x] * (H/2 - 4);
+            x === 0 ? ctx.moveTo(0, y) : ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+      }
+
+      function apply(mx, my) {
+        init();
+        const W = canvas.offsetWidth || 512, H = canvas.offsetHeight || 80;
+        const x = Math.max(0, Math.min(W - 1, Math.round(mx)));
+        const amp = Math.max(-1, Math.min(1, -(my - H/2) / (H/2 - 4)));
+        if (lastX !== null && Math.abs(x - lastX) > 1) {
+          const y0 = values[lastX], steps = Math.abs(x - lastX), dir = x > lastX ? 1 : -1;
+          for (let i = 0; i <= steps; i++) {
+            const xi = lastX + i * dir;
+            if (xi >= 0 && xi < W) values[xi] = y0 + (amp - y0) * (i / steps);
+          }
+        } else { values[x] = amp; }
+        lastX = x;
+        render();
+      }
+
+      function coord(e, touch) {
+        const r = canvas.getBoundingClientRect();
+        const cx = touch ? touch.clientX : e.clientX;
+        const cy = touch ? touch.clientY : e.clientY;
+        return [(cx - r.left) * (canvas.offsetWidth / r.width),
+                (cy - r.top)  * (canvas.offsetHeight / r.height)];
+      }
+
+      function send() {
+        if (!values) return;
+        const W = values.length, N = 2048;
+        const resampled = new Float32Array(N);
+        for (let i = 0; i < N; i++) {
+          const x = (i / N) * W;
+          const x0 = Math.floor(x) % W, x1 = (x0 + 1) % W, f = x - Math.floor(x);
+          resampled[i] = values[x0] + f * (values[x1] - values[x0]);
+        }
+        loaded = true;
+        onSend(resampled);
+      }
+
+      canvas.addEventListener('mousedown', e => {
+        drawing = true; lastX = null; e.preventDefault();
+        const [mx, my] = coord(e); apply(mx, my);
+      });
+      window.addEventListener('mousemove', e => {
+        if (!drawing) return;
+        const [mx, my] = coord(e); apply(mx, my);
+      });
+      window.addEventListener('mouseup', () => {
+        if (drawing) { drawing = false; lastX = null; send(); }
+      });
+      canvas.addEventListener('touchstart', e => {
+        drawing = true; lastX = null; e.preventDefault();
+        const [mx, my] = coord(e, e.touches[0]); apply(mx, my);
+      }, { passive: false });
+      canvas.addEventListener('touchmove', e => {
+        if (!drawing) return; e.preventDefault();
+        const [mx, my] = coord(e, e.touches[0]); apply(mx, my);
+      }, { passive: false });
+      canvas.addEventListener('touchend', () => {
+        if (drawing) { drawing = false; lastX = null; send(); }
+      });
+
+      return { render, getValues: () => values, isLoaded: () => loaded };
+    }
+
+    osc1Draw = makeDrawController(drawCanvas, resampled => {
+      startAudio().then(() => {
+        if (synth) { synth.load_osc1_custom_table(resampled); synth.set_waveform(7); }
+      });
+    });
+    osc2Draw = makeDrawController(drawCanvas2, resampled => {
+      startAudio().then(() => {
+        if (synth) { synth.load_osc2_custom_table(resampled); synth.set_osc2_waveform(7); }
+      });
+    });
+
     // ── Waveform buttons ────────────────────────────────────────────────
     const osc1Btns = document.querySelectorAll('#osc1-wf .wf-btn');
     osc1Btns.forEach(btn => {
@@ -751,12 +873,11 @@
         activeWave = idx;
         osc1Btns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+        document.getElementById('wf-draw1-wrap').classList.toggle('active', idx === 7);
         if (idx === 7) {
-          drawCanvas.classList.add('active');
-          initDrawCanvas(); renderDrawCanvas();
-          if (customTableLoaded && synth) synth.set_waveform(7);
+          osc1Draw.render();
+          if (osc1Draw.isLoaded() && synth) synth.set_waveform(7);
         } else {
-          drawCanvas.classList.remove('active');
           if (synth) synth.set_waveform(idx);
         }
       });
@@ -765,106 +886,17 @@
     const osc2Btns = document.querySelectorAll('#osc2-wf .wf-btn');
     osc2Btns.forEach(btn => {
       btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.idx);
         osc2Btns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        if (synth) synth.set_osc2_waveform(parseInt(btn.dataset.idx));
-      });
-    });
-
-    // ── Custom wavetable draw ────────────────────────────────────────────
-    const drawCtx = drawCanvas.getContext('2d');
-    let isDrawing = false, lastDrawX = null;
-
-    function initDrawCanvas() {
-      const W = drawCanvas.offsetWidth || 512;
-      if (!customDrawValues || customDrawValues.length !== W) {
-        customDrawValues = new Float32Array(W);
-      }
-    }
-
-    function renderDrawCanvas() {
-      initDrawCanvas();
-      const W = drawCanvas.offsetWidth || 512, H = drawCanvas.offsetHeight;
-      const dpr = window.devicePixelRatio || 1;
-      if (drawCanvas.width !== Math.round(W * dpr)) {
-        drawCanvas.width  = Math.round(W * dpr);
-        drawCanvas.height = Math.round(H * dpr);
-        drawCtx.scale(dpr, dpr);
-      }
-      drawCtx.clearRect(0, 0, W, H);
-      drawCtx.fillStyle = '#11111b'; drawCtx.fillRect(0, 0, W, H);
-      drawCtx.strokeStyle = '#2a2a3e'; drawCtx.lineWidth = 1;
-      drawCtx.beginPath(); drawCtx.moveTo(0, H/2); drawCtx.lineTo(W, H/2); drawCtx.stroke();
-
-      if (customDrawValues.every(v => v === 0)) {
-        drawCtx.fillStyle = '#45475a'; drawCtx.font = '11px Courier New'; drawCtx.textAlign = 'center';
-        drawCtx.fillText('drag to draw a waveform', W/2, H/2 - 6);
-      } else {
-        drawCtx.strokeStyle = '#a6e3a1'; drawCtx.lineWidth = 2;
-        drawCtx.beginPath();
-        for (let x = 0; x < W; x++) {
-          const y = H/2 - customDrawValues[x] * (H/2 - 4);
-          x === 0 ? drawCtx.moveTo(0, y) : drawCtx.lineTo(x, y);
+        document.getElementById('wf-draw2-wrap').classList.toggle('active', idx === 7);
+        if (idx === 7) {
+          osc2Draw.render();
+          if (osc2Draw.isLoaded() && synth) synth.set_osc2_waveform(7);
+        } else {
+          if (synth) synth.set_osc2_waveform(idx);
         }
-        drawCtx.stroke();
-      }
-    }
-
-    function applyDraw(mx, my) {
-      initDrawCanvas();
-      const W = drawCanvas.offsetWidth || 512, H = drawCanvas.offsetHeight;
-      const x = Math.max(0, Math.min(W - 1, Math.round(mx)));
-      const amp = Math.max(-1, Math.min(1, -(my - H/2) / (H/2 - 4)));
-      if (lastDrawX !== null && Math.abs(x - lastDrawX) > 1) {
-        const y0 = customDrawValues[lastDrawX], steps = Math.abs(x - lastDrawX), dir = x > lastDrawX ? 1 : -1;
-        for (let i = 0; i <= steps; i++) {
-          const xi = lastDrawX + i * dir;
-          if (xi >= 0 && xi < W) customDrawValues[xi] = y0 + (amp - y0) * (i / steps);
-        }
-      } else { customDrawValues[x] = amp; }
-      lastDrawX = x;
-      renderDrawCanvas();
-    }
-
-    function sendCustomToSynth() {
-      if (!customDrawValues) return;
-      const W = customDrawValues.length, N = 2048;
-      const resampled = new Float32Array(N);
-      for (let i = 0; i < N; i++) {
-        const x = (i / N) * W;
-        const x0 = Math.floor(x) % W, x1 = (x0 + 1) % W, frac = x - Math.floor(x);
-        resampled[i] = customDrawValues[x0] + frac * (customDrawValues[x1] - customDrawValues[x0]);
-      }
-      startAudio().then(() => {
-        if (synth) { synth.load_custom_table(resampled); customTableLoaded = true; activeWave = 7; }
       });
-    }
-
-    drawCanvas.addEventListener('mousedown', e => {
-      isDrawing = true; lastDrawX = null; e.preventDefault();
-      const r = drawCanvas.getBoundingClientRect();
-      applyDraw((e.clientX-r.left)*(drawCanvas.offsetWidth/r.width), (e.clientY-r.top)*(drawCanvas.offsetHeight/r.height));
-    });
-    window.addEventListener('mousemove', e => {
-      if (!isDrawing) return;
-      const r = drawCanvas.getBoundingClientRect();
-      applyDraw((e.clientX-r.left)*(drawCanvas.offsetWidth/r.width), (e.clientY-r.top)*(drawCanvas.offsetHeight/r.height));
-    });
-    window.addEventListener('mouseup', () => {
-      if (isDrawing) { isDrawing = false; lastDrawX = null; sendCustomToSynth(); }
-    });
-    drawCanvas.addEventListener('touchstart', e => {
-      isDrawing = true; lastDrawX = null; e.preventDefault();
-      const r = drawCanvas.getBoundingClientRect(), t = e.touches[0];
-      applyDraw((t.clientX-r.left)*(drawCanvas.offsetWidth/r.width), (t.clientY-r.top)*(drawCanvas.offsetHeight/r.height));
-    }, { passive: false });
-    drawCanvas.addEventListener('touchmove', e => {
-      if (!isDrawing) return; e.preventDefault();
-      const r = drawCanvas.getBoundingClientRect(), t = e.touches[0];
-      applyDraw((t.clientX-r.left)*(drawCanvas.offsetWidth/r.width), (t.clientY-r.top)*(drawCanvas.offsetHeight/r.height));
-    }, { passive: false });
-    drawCanvas.addEventListener('touchend', () => {
-      if (isDrawing) { isDrawing = false; lastDrawX = null; sendCustomToSynth(); }
     });
 
     // ── ADSR interactive canvas ─────────────────────────────────────────
