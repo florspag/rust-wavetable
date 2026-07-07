@@ -4,9 +4,11 @@ use std::sync::OnceLock;
 
 pub const WAVEFORMS: [&str; 8] = ["Sine", "Saw", "Square", "Triangle", "Pulse", "Organ", "Additive", "Custom"];
 
-const SINC_L: isize = 4;                              // taps on each side
-const SINC_TAPS: usize = (SINC_L * 2) as usize;      // 8 total
-const SINC_TABLE_SIZE: usize = 512;                   // fractional subdivisions
+// ── Blackman-windowed sinc LUT ───────────────────────────────────────────────
+
+const SINC_L: isize = 4;
+const SINC_TAPS: usize = (SINC_L * 2) as usize;
+const SINC_TABLE_SIZE: usize = 512;
 
 static SINC_TABLE: OnceLock<Vec<[f32; SINC_TAPS]>> = OnceLock::new();
 
@@ -19,8 +21,6 @@ fn sinc_kernel(x: f32) -> f32 {
 }
 
 fn build_sinc_table() -> Vec<[f32; SINC_TAPS]> {
-    // SINC_TABLE_SIZE + 1 rows: the extra row at t=1.0 lets tick() safely
-    // interpolate between row[qi] and row[qi+1] without a bounds check.
     (0..=SINC_TABLE_SIZE).map(|qi| {
         let t = qi as f32 / SINC_TABLE_SIZE as f32;
         let mut weights = [0.0f32; SINC_TAPS];
@@ -31,21 +31,25 @@ fn build_sinc_table() -> Vec<[f32; SINC_TAPS]> {
     }).collect()
 }
 
+// ── Oscillator ───────────────────────────────────────────────────────────────
+
 pub struct Oscillator {
-    tables: Vec<Vec<f32>>,
-    active: usize,
+    custom_table: Vec<f32>,   // slot 7: user-drawn; nil until load_custom_table()
+    active_waveform: usize,
+    active_mip: usize,        // updated by set_freq / change_freq
     phase: f32,
     phase_inc: f32,
 }
 
 impl Oscillator {
     pub fn new() -> Self {
-        SINC_TABLE.get_or_init(build_sinc_table); // warm on first voice, shared by all
-        let mut tables: Vec<Vec<f32>> = (0..7).map(wavetable::build_wavetable).collect();
-        tables.push(vec![0.0; wavetable::TABLE_SIZE]); // slot 7: custom
+        // Warm both global tables on the first oscillator; subsequent calls are free.
+        SINC_TABLE.get_or_init(build_sinc_table);
+        wavetable::get_mip_tables();
         Self {
-            tables,
-            active: 0,
+            custom_table: vec![0.0; wavetable::TABLE_SIZE],
+            active_waveform: 0,
+            active_mip: 0,
             phase: 0.0,
             phase_inc: 0.0,
         }
@@ -54,22 +58,22 @@ impl Oscillator {
     pub fn set_freq(&mut self, freq: f32, sr: f32) {
         self.phase_inc = freq / sr;
         self.phase = 0.0;
+        self.active_mip = wavetable::select_mip_level(freq, sr);
     }
 
     pub fn change_freq(&mut self, freq: f32, sr: f32) {
         self.phase_inc = freq / sr;
+        self.active_mip = wavetable::select_mip_level(freq, sr);
         // phase preserved → no click when sliding pitch live
     }
 
     pub fn set_waveform(&mut self, idx: usize) {
-        if idx < self.tables.len() {
-            self.active = idx;
-        }
+        if idx < 8 { self.active_waveform = idx; }
     }
 
     pub fn load_custom_table(&mut self, samples: &[f32]) {
         let n = samples.len();
-        let table = (0..wavetable::TABLE_SIZE)
+        self.custom_table = (0..wavetable::TABLE_SIZE)
             .map(|i| {
                 let pos = (i as f32 / wavetable::TABLE_SIZE as f32) * n as f32;
                 let i0 = pos as usize % n;
@@ -78,23 +82,30 @@ impl Oscillator {
                 (samples[i0] + frac * (samples[i1] - samples[i0])).clamp(-1.0, 1.0)
             })
             .collect();
-        self.tables[7] = table;
-        self.active = 7;
+        self.active_waveform = 7;
     }
 
     pub fn tick(&mut self) -> f32 {
-        let table = &self.tables[self.active];
         let n = wavetable::TABLE_SIZE;
         let pos = self.phase * n as f32;
         let i0 = pos as usize % n;
         let t = pos.fract();
 
+        // Sinc LUT: interpolate between adjacent rows for sub-row smoothness.
         let sinc_table = SINC_TABLE.get_or_init(build_sinc_table);
         let frac_idx = t * SINC_TABLE_SIZE as f32;
-        let qi = frac_idx as usize;     // always < SINC_TABLE_SIZE since t < 1.0
-        let alpha = frac_idx.fract();   // sub-row fraction
+        let qi = frac_idx as usize;
+        let alpha = frac_idx.fract();
         let w0 = &sinc_table[qi];
-        let w1 = &sinc_table[qi + 1];  // safe: table has SINC_TABLE_SIZE + 1 rows
+        let w1 = &sinc_table[qi + 1]; // safe: table has SINC_TABLE_SIZE + 1 rows
+
+        // Select the correct mip level; custom waveform bypasses mip tables.
+        let mip_tables = wavetable::get_mip_tables();
+        let table: &[f32] = if self.active_waveform == 7 {
+            &self.custom_table
+        } else {
+            &mip_tables[self.active_waveform][self.active_mip]
+        };
 
         let mut s = 0.0f32;
         for (j, k) in (-(SINC_L - 1)..=SINC_L).enumerate() {

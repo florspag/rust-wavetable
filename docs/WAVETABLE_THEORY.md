@@ -12,7 +12,7 @@ The table holds values in `[-1.0, 1.0]` and represents **one period**, normalize
 
 The oscillator tracks a **phase** in `[0.0, 1.0)`:
 
-```
+```text
 phase_inc = freq / sample_rate
 phase = (phase + phase_inc) % 1.0
 ```
@@ -107,40 +107,92 @@ Snapping to the nearest row would introduce a step error of up to `1 / (2 × SIN
 
 A naive square or sawtooth wave contains **infinite harmonics**. When those harmonics exceed Nyquist (`sr / 2`), they fold back into audible frequencies as **aliasing** — a harsh, inharmonic distortion.
 
-The waveforms in `wavetable.rs` bake a single alias-prone shape into the table at fill time. This is fine at low pitches but degrades at high ones.
+The solution used here is **multi-table mip-mapping**: each waveform is pre-built at 10 harmonic densities. `set_freq` picks the richest table whose highest harmonic still fits below Nyquist.
 
-### The Fix: Bandlimited Wavetables
+---
 
-- Build multiple tables for different frequency ranges, each containing only the harmonics that fit below Nyquist for that range.
-- At playback, select the table whose harmonic content matches the current pitch.
-- This is how commercial synths (Serum, Vital, etc.) achieve clean high-frequency response.
+## Multi-Table Mip-Mapping
 
-Common techniques: **BLIT** (Bandlimited Impulse Train), **BLEP** (Bandlimited Step), **multi-table mip-mapping**.
+### Mip levels
+
+Ten tables are built per waveform at startup, covering the full piano range:
+
+| Level | Max harmonics | Aliasing-free up to |
+| ----- | ------------- | ------------------- |
+| 0 | 512 | ~43 Hz |
+| 1 | 256 | ~86 Hz |
+| 2 | 128 | ~172 Hz |
+| 3 | 64 | ~344 Hz |
+| 4 | 32 | ~689 Hz |
+| 5 | 16 | ~1 378 Hz |
+| 6 | 8 | ~2 756 Hz |
+| 7 | 4 | ~5 512 Hz |
+| 8 | 2 | ~11 025 Hz |
+| 9 | 1 | any pitch |
+
+### Level selection
+
+On every `set_freq` or `change_freq` call the oscillator computes:
+
+```rust
+let needed = ((sr * 0.5) / freq) as usize;   // harmonics that fit below Nyquist
+// MIP_MAX_HARMONICS = [512, 256, 128, 64, 32, 16, 8, 4, 2, 1]
+let level = MIP_MAX_HARMONICS.iter()
+    .position(|&h| h <= needed)
+    .unwrap_or(MIP_LEVELS - 1);
+```
+
+Searching a descending list for the first entry `≤ needed` gives the level with the **most harmonics that still avoids aliasing**.  At A4 (440 Hz, sr = 44100): `needed = 50` → level 4 (32 harmonics; highest = 32 × 440 = 14 080 Hz < 22 050 ✓).
+
+### Bandlimited table generation
+
+Instead of the closed-form formulas used in naive wavetable synths (e.g. `2t − 1`), each table is built by **additive Fourier synthesis** — summing only the harmonics that fit in that level — then peak-normalised to `[-1, 1]`:
+
+| Waveform | Fourier series |
+| -------- | -------------- |
+| Sawtooth | `−(2/π) Σ_{k=1}^{N} sin(2πkt)/k` |
+| Square | `(4/π) Σ_{k odd} sin(2πkt)/k` |
+| Triangle | `−(8/π²) Σ_{k odd} cos(2πkt)/k²` |
+| Pulse 25% | `(2d−1) + Σ (4sin(πkd)/(πk)) cos(2πkt−πkd)` |
+
+Sine is already band-limited (one harmonic), so it reuses the same table at every level. Organ and Additive contain ≤5 harmonics, so higher-level tables simply omit the harmonics that would alias.
+
+### Global OnceLock
+
+All 7 × 10 = 70 tables (~560 KB) are stored in a single `static MIP_TABLES: OnceLock<…>` and built once on the first `Oscillator::new()` call. All 16 oscillators (8 voices × 2 osc) share the same allocation.
+
+```rust
+pub fn get_mip_tables() -> &'static Vec<Vec<Vec<f32>>> {
+    MIP_TABLES.get_or_init(|| (0..7).map(build_mip_for_kind).collect())
+}
+```
+
+Custom waveforms (slot 7) are not part of the mip stack — they are stored per-oscillator in `custom_table: Vec<f32>` since they change at runtime.
 
 ---
 
 ## Waveforms
 
-Seven built-in tables are generated at startup; an eighth slot holds a user-drawn custom table.
+Seven built-in waveforms are generated at startup via bandlimited Fourier synthesis (see Multi-Table Mip-Mapping above); an eighth slot holds a user-drawn custom table.
 
-| `kind` | Name | Formula / method | Character |
-| ------ | ---- | ---------------- | --------- |
-| `0` | Sine | `sin(2π·t)` | Pure tone, fundamental only |
-| `1` | Sawtooth | `2t − 1` | All harmonics `1/n` — bright, buzzy |
-| `2` | Square | `±1` at 50% duty | Odd harmonics `1/n` — hollow, reedy |
-| `3` | Triangle | `1 − 4·\|t − 0.5\|` | Odd harmonics `1/n²` — soft, flute-like |
-| `4` | Pulse | `±1` at 25% duty | Odd + even harmonics — thin, nasal |
-| `5` | Organ | Sum of harmonics 1–4 with `½, ¼, ⅛` weights | Warm, Hammond-style |
-| `6` | Additive | Three odd harmonics: `sin + sin(3f)/3 + sin(5f)/5` | Bandlimited square approximation |
+| `kind` | Name | Fourier series (harmonics capped at Nyquist) | Character |
+| ------ | ---- | -------------------------------------------- | --------- |
+| `0` | Sine | `sin(2π·t)` (single harmonic — no aliasing) | Pure tone |
+| `1` | Sawtooth | `−(2/π) Σ_{k=1}^{N} sin(2πkt)/k` | All harmonics `1/n` — bright, buzzy |
+| `2` | Square | `(4/π) Σ_{k odd} sin(2πkt)/k` | Odd harmonics `1/n` — hollow, reedy |
+| `3` | Triangle | `−(8/π²) Σ_{k odd} cos(2πkt)/k²` | Odd harmonics `1/n²` — soft, flute-like |
+| `4` | Pulse | `(2d−1) + Σ (4sin(πkd)/(πk)) cos(2πkt−πkd)`, d = 0.25 | Thin, nasal |
+| `5` | Organ | Harmonics 1–4: `sin(2πt) + ½sin(4πt) + ¼sin(6πt) + ⅛sin(8πt)` | Warm, Hammond-style |
+| `6` | Additive | `sin(2πt) + sin(6πt)/3 + sin(10πt)/5` | Soft square approximation |
 | `7` | Custom | User-drawn in the browser, resampled to 2048 samples | Anything |
 
-Triangle falls off as `1/n²` so it aliases far less than saw or square. The Additive waveform pre-sums a few harmonics in the table — same principle as the bandlimited techniques below, just applied once at build time rather than per-pitch.
+Triangle falls off as `1/n²` so it aliases far less than saw or square at any given mip level. The Organ and Additive waveforms use only a small fixed set of harmonics, so their higher mip levels simply silence the harmonics that would alias.
 
 ### Custom wavetable
 
 The browser GUI provides a draw canvas (shown when **Custom** is selected). The user drags to sculpt one full cycle; on release the browser resamples the drawing to 2048 `Float32` samples and sends them to the WASM synth via:
 
-```
+```text
 JS Float32Array  →  wasm-bindgen  →  &[f32]  →  resample to TABLE_SIZE  →  tables[7]
 ```
 
@@ -193,7 +245,7 @@ The filter type cycles LP → HP → BP → LP with each click of the selector �
 
 The transfer function is computed via the Direct Form II transposed structure, which is numerically stable for audio-rate coefficients:
 
-```
+```text
 y[n] = b0·x[n] + b1·x[n−1] + b2·x[n−2] − a1·y[n−1] − a2·y[n−2]
 ```
 
@@ -224,7 +276,7 @@ let idx = voices.iter().position(|v| !v.env.is_active())
 
 With 8 voices simultaneously active, the raw sum can exceed ±1.0. A `tanh` limiter is applied after mixing:
 
-```
+```text
 mixed = tanh(sum × 0.3)
 ```
 
@@ -236,7 +288,7 @@ The `0.3` scale factor means a single voice (`0.3 × 1.0 = 0.3`) passes through 
 
 Each `Voice` contains two independent `Oscillator` instances. Each oscillator has its own wavetable selection (set via `set_waveform` for osc1, `set_osc2_waveform` for osc2) and is pitched symmetrically around the played note using **detune** (in cents, 0–100):
 
-```
+```text
 osc1 frequency = freq × 2^(+cents / 2400)   ← slightly sharp
 osc2 frequency = freq ÷ 2^(+cents / 2400)   ← equally flat
 ```
@@ -245,7 +297,7 @@ Splitting the detune symmetrically keeps the perceived centre pitch locked to th
 
 The two outputs are blended with **Osc2 Mix** (0–1) and normalised so total amplitude stays constant regardless of mix level:
 
-```
+```text
 osc_out = (osc1 + osc2 × mix) / (1 + mix)
 ```
 
@@ -265,15 +317,15 @@ The browser GUI shows two labelled rows of waveform buttons — **Osc 1** (blue 
 
 ## Signal Flow
 
-```
+```text
 Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(freq)
                         ↓                                           ↓
                Voice[0..8] allocated or stolen          updates both osc phase_incs
-               each voice: osc1 + osc2 + Adsr                (no phase reset,
-                        ↓                                      no click)
+               each voice: osc1 + osc2 + Adsr           + selects mip level for freq
+                        ↓                                      (no phase reset)
   per-voice tick():
-    osc1: freq × detune_ratio  →  sinc LUT  →  s1
-    osc2: freq ÷ detune_ratio  →  sinc LUT  →  s2
+    osc1: freq × detune_ratio  →  mip table[waveform1][level]  →  sinc LUT  →  s1
+    osc2: freq ÷ detune_ratio  →  mip table[waveform2][level]  →  sinc LUT  →  s2
     osc_out = (s1 + s2 × mix) / (1 + mix)   ← amplitude-normalised blend
     osc_out × ADSR envelope level
                         ↓
@@ -290,8 +342,8 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 
 ## Where to Go Next
 
-1. **Multi-table mip-mapping** — generate one table per octave with harmonics capped at Nyquist for that octave, select the right table in `set_freq`.
-2. **Increase LUT resolution** — raise `SINC_TABLE_SIZE` to 1024 or 4096 for even finer row granularity; the row-lerp already makes 512 more than sufficient for 24-bit audio.
-3. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution.
+1. **Unison / supersaw** — spawn N detuned oscillators per voice (typically 4–8) with randomised initial phases and spread across the stereo field; gives the dense "supersaw" lead sound found in classic analogue polysynths.
+2. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be an LFO target.
+3. **LFO** — a low-frequency oscillator (0.01–20 Hz) that modulates pitch, filter cutoff, or oscillator mix over time; the same `Oscillator` struct can be reused at a very low `phase_inc`.
 4. **Osc2 Custom draw** — expose a second draw canvas dedicated to osc2 so both oscillators can have distinct user-drawn waveforms simultaneously.
 5. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.

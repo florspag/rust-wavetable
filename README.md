@@ -83,8 +83,8 @@ Open [http://localhost:8080](http://localhost:8080).
 src/
   main.rs          # Terminal binary (cpal + crossterm)
   lib.rs           # Library root — shared by WASM build
-  wavetable.rs     # Table generation (8 waveforms: sine, saw, square, triangle, pulse, organ, additive + custom slot)
-  oscillator.rs    # Phase accumulator + linear interpolation; holds all 8 tables
+  wavetable.rs     # Mip-mapped table generation — 10 harmonic levels × 7 waveforms via Fourier synthesis; 8th slot (Custom) is user-drawn at runtime
+  oscillator.rs    # Phase accumulator + 8-tap Blackman-sinc interpolation (LUT + row lerp); selects mip level on set_freq
   adsr.rs          # ADSR envelope with live parameter setters
   filter.rs        # Biquad filter (LP / HP / BP, Audio EQ Cookbook)
   keys.rs          # QWERTY → MIDI mapping (terminal only)
