@@ -5,14 +5,20 @@ use crate::filter::Filter;
 use std::f32::consts::FRAC_PI_4;
 
 const VOICES: usize = 8;
+const MAX_UNISON: usize = 8;
+
+fn unison_cents(i: usize, count: usize, detune: f32) -> f32 {
+    if count <= 1 { 0.0 }
+    else { detune * (i as f32 / (count - 1) as f32 - 0.5) }
+}
 
 struct Voice {
-    osc1: Oscillator,
+    osc1s: Vec<Oscillator>,  // MAX_UNISON detuned copies; only [..unison_count] are active
     osc2: Oscillator,
     env: Adsr,
     filter: Filter,
     freq: f32,
-    age: u64,        // incremented each note_on — lower = older = steal first
+    age: u64,
     auto_release: u64,
     pan_l: f32,      // equal-power left gain  (precomputed from spread)
     pan_r: f32,      // equal-power right gain (precomputed from spread)
@@ -21,7 +27,7 @@ struct Voice {
 impl Voice {
     fn new(sample_rate: f32) -> Self {
         Self {
-            osc1: Oscillator::new(),
+            osc1s: (0..MAX_UNISON).map(|_| Oscillator::new()).collect(),
             osc2: Oscillator::new(),
             env: Adsr::new(sample_rate),
             filter: Filter::new(sample_rate),
@@ -42,6 +48,8 @@ pub struct Synth {
     voice_counter: u64,
     detune_ratio: f32,   // 2^(cents/2400): osc1 = freq*ratio, osc2 = freq/ratio
     osc2_mix: f32,       // 0 = osc1 only, 1 = equal blend of both
+    unison_count: usize, // 1–MAX_UNISON active osc1 copies per voice
+    unison_detune: f32,  // total cents spread across all unison oscillators (0–100)
     lfo: Oscillator,
     lfo_depth: f32,      // 0.0–1.0
     lfo_target: u32,     // 0=pitch, 1=cutoff, 2=mix
@@ -66,6 +74,21 @@ impl Synth {
             v.pan_r = angle.sin();
         }
     }
+
+    fn update_unison_freqs(&mut self) {
+        let count = self.unison_count;
+        let detune = self.unison_detune;
+        let dr = self.detune_ratio;
+        let sr = self.sample_rate;
+        for v in self.voices.iter_mut() {
+            if v.freq <= 0.0 { continue; }
+            let base = v.freq * dr;
+            for i in 0..count {
+                let cents = unison_cents(i, count, detune);
+                v.osc1s[i].change_freq(base * 2f32.powf(cents / 1200.0), sr);
+            }
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -81,6 +104,8 @@ impl Synth {
             voice_counter: 0,
             detune_ratio: 1.0,
             osc2_mix: 0.0,
+            unison_count: 1,
+            unison_detune: 0.0,
             lfo,
             lfo_depth: 0.0,
             lfo_target: 0,
@@ -112,8 +137,15 @@ impl Synth {
         let bc = self.base_cutoff;
         let br = self.base_resonance;
         let bt = self.base_filter_type;
+        let count = self.unison_count;
+        let detune = self.unison_detune;
         let v = &mut self.voices[idx];
-        v.osc1.set_freq(freq * dr, sr);
+        for i in 0..count {
+            let cents = unison_cents(i, count, detune);
+            v.osc1s[i].set_freq(freq * dr * 2f32.powf(cents / 1200.0), sr);
+            // Distribute phases evenly to avoid phase cancellation across unison voices.
+            v.osc1s[i].set_phase(i as f32 / count as f32);
+        }
         v.osc2.set_freq(freq / dr, sr);
         v.env.note_on();
         // Reset filter to current global settings (stolen voice may have a mid-sweep state).
@@ -141,11 +173,16 @@ impl Synth {
         let dr = self.detune_ratio;
         let sr = self.sample_rate;
         let ar = self.auto_release_samples;
+        let count = self.unison_count;
+        let detune = self.unison_detune;
         if let Some(v) = self.voices.iter_mut()
             .filter(|v| v.env.is_active())
             .max_by_key(|v| v.age)
         {
-            v.osc1.change_freq(freq * dr, sr);
+            for i in 0..count {
+                let cents = unison_cents(i, count, detune);
+                v.osc1s[i].change_freq(freq * dr * 2f32.powf(cents / 1200.0), sr);
+            }
             v.osc2.change_freq(freq / dr, sr);
             v.freq = freq;
             v.auto_release = ar;
@@ -170,12 +207,25 @@ impl Synth {
         self.update_pans();
     }
 
+    /// Number of detuned osc1 copies per voice (1–8).
+    pub fn set_unison_count(&mut self, n: u32) {
+        self.unison_count = (n as usize).clamp(1, MAX_UNISON);
+        self.update_unison_freqs();
+    }
+
+    /// Total pitch spread across all unison oscillators in cents (0–100).
+    pub fn set_unison_detune(&mut self, cents: f32) {
+        self.unison_detune = cents.clamp(0.0, 100.0);
+        self.update_unison_freqs();
+    }
+
     /// Stereo output — call get_left() / get_right() after each tick().
     pub fn tick(&mut self) {
         let osc2_mix   = self.osc2_mix;
         let lfo_out    = self.lfo.tick();       // -1.0 to +1.0
         let lfo_depth  = self.lfo_depth;
         let lfo_target = self.lfo_target;
+        let count      = self.unison_count;
 
         // Pitch: ±2 semitones at full depth.
         let pitch_scale = 2f32.powf(lfo_out * lfo_depth * 2.0 / 12.0);
@@ -203,13 +253,22 @@ impl Synth {
                 if v.auto_release == 0 { v.env.note_off(); }
             }
             let ps = if lfo_target == 0 { pitch_scale } else { 1.0 };
-            v.osc1.set_pitch_scale(ps);
+            for osc in v.osc1s[..count].iter_mut() {
+                osc.set_pitch_scale(ps);
+            }
             v.osc2.set_pitch_scale(ps);
             if v.env.is_active() {
                 if lfo_target == 1 {
                     v.filter.set_cutoff(mod_cutoff);
                 }
-                let osc = (v.osc1.tick() + v.osc2.tick() * effective_mix) / (1.0 + effective_mix);
+                // Mix active unison oscillators to mono, then normalise by count.
+                let mut osc1_out = 0.0f32;
+                for osc in v.osc1s[..count].iter_mut() {
+                    osc1_out += osc.tick();
+                }
+                osc1_out /= count as f32;
+
+                let osc = (osc1_out + v.osc2.tick() * effective_mix) / (1.0 + effective_mix);
                 let filtered = v.filter.process(osc * v.env.tick());
                 left  += filtered * v.pan_l;
                 right += filtered * v.pan_r;
@@ -225,7 +284,9 @@ impl Synth {
     pub fn get_right(&self) -> f32 { self.last_right }
 
     pub fn set_waveform(&mut self, idx: u32) {
-        for v in self.voices.iter_mut() { v.osc1.set_waveform(idx as usize); }
+        for v in self.voices.iter_mut() {
+            for osc in v.osc1s.iter_mut() { osc.set_waveform(idx as usize); }
+        }
     }
 
     pub fn set_osc2_waveform(&mut self, idx: u32) {
@@ -233,7 +294,9 @@ impl Synth {
     }
 
     pub fn load_osc1_custom_table(&mut self, samples: &[f32]) {
-        for v in self.voices.iter_mut() { v.osc1.load_custom_table(samples); }
+        for v in self.voices.iter_mut() {
+            for osc in v.osc1s.iter_mut() { osc.load_custom_table(samples); }
+        }
     }
 
     pub fn load_osc2_custom_table(&mut self, samples: &[f32]) {
@@ -272,7 +335,7 @@ impl Synth {
         // Immediately restore clean state for the parameter we're leaving.
         if self.lfo_target != 0 {
             for v in self.voices.iter_mut() {
-                v.osc1.set_pitch_scale(1.0);
+                for osc in v.osc1s.iter_mut() { osc.set_pitch_scale(1.0); }
                 v.osc2.set_pitch_scale(1.0);
             }
         }

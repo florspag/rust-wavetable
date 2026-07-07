@@ -69,6 +69,10 @@ impl Oscillator {
         // phase preserved → no click when sliding pitch live
     }
 
+    pub fn set_phase(&mut self, phase: f32) {
+        self.phase = phase % 1.0;
+    }
+
     pub fn set_pitch_scale(&mut self, scale: f32) {
         self.pitch_scale = scale;
     }

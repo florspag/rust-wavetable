@@ -126,6 +126,34 @@
       margin-top: 0.5rem;
     }
     .custom-draw-wrap.active { display: block; }
+
+    /* Unison row */
+    .uni-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 0.6rem;
+    }
+    .uni-count { display: flex; gap: 3px; }
+    .uni-btn {
+      width: 22px;
+      height: 22px;
+      background: #1e1e2e;
+      border: 1px solid #313244;
+      border-radius: 3px;
+      color: #a6adc8;
+      font-family: inherit;
+      font-size: 0.7rem;
+      cursor: pointer;
+      padding: 0;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    .uni-btn:hover { background: #313244; }
+    .uni-btn.active {
+      background: #2e1e4e;
+      border-color: #cba6f7;
+      color: #cba6f7;
+    }
     #wf-draw, #wf-draw2 {
       display: block;
       width: 100%;
@@ -405,6 +433,24 @@
     <div id="wf-draw2-wrap" class="custom-draw-wrap">
       <div class="osc-row-label">Osc 2 — Custom</div>
       <canvas id="wf-draw2"></canvas>
+    </div>
+    <div class="uni-row">
+      <span class="knob-label" style="flex-shrink:0">Unison</span>
+      <div class="uni-count" id="uni-count">
+        <button class="uni-btn active" data-n="1">1</button>
+        <button class="uni-btn" data-n="2">2</button>
+        <button class="uni-btn" data-n="3">3</button>
+        <button class="uni-btn" data-n="4">4</button>
+        <button class="uni-btn" data-n="5">5</button>
+        <button class="uni-btn" data-n="6">6</button>
+        <button class="uni-btn" data-n="7">7</button>
+        <button class="uni-btn" data-n="8">8</button>
+      </div>
+      <div class="knob-wrap">
+        <canvas class="knob-canvas" id="uni-detune-knob"></canvas>
+        <span class="knob-label">Detune</span>
+        <span class="knob-val" id="uni-detune-val">0¢</span>
+      </div>
     </div>
     <div class="flt-knobs" style="margin-top:0.6rem;">
       <div class="knob-wrap">
@@ -1409,6 +1455,23 @@
       onChange: s => {
         document.getElementById('osc-spread-val').textContent = (s * 100).toFixed(0) + '%';
         if (synth) synth.set_spread(s);
+      },
+    });
+
+    // ── Unison ──────────────────────────────────────────────────────────
+    document.getElementById('uni-count').addEventListener('click', e => {
+      const btn = e.target.closest('.uni-btn');
+      if (!btn) return;
+      document.querySelectorAll('.uni-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (synth) synth.set_unison_count(parseInt(btn.dataset.n));
+    });
+
+    new Knob(document.getElementById('uni-detune-knob'), {
+      min: 0, max: 100, value: 0, color: '#cba6f7',
+      onChange: cents => {
+        document.getElementById('uni-detune-val').textContent = cents.toFixed(0) + '¢';
+        if (synth) synth.set_unison_detune(cents);
       },
     });
 

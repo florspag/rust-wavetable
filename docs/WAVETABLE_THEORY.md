@@ -369,6 +369,50 @@ Changing targets immediately restores the parameter that was being modulated: pi
 
 ---
 
+## Unison / Supersaw
+
+Each voice can run up to **8 detuned copies** of Osc 1 simultaneously. This is the technique behind the "supersaw" sound: multiple slightly flat/sharp oscillators beating against each other produce a thick, animated timbre that a single oscillator cannot.
+
+### Oscillator count
+
+The **Unison** count selector (1–8) controls how many copies are active per voice. At count = 1 the feature is off; the voice sounds exactly as before. At count = 8 you get the full supersaw spread.
+
+### Detune distribution
+
+The active copies are spread evenly from −½D to +½D cents, where D is the **Detune** knob value (0–100 cents):
+
+```text
+cents_i = D × (i / (count − 1) − 0.5)   for i = 0 … count − 1
+copy_i freq = base_freq × 2^(cents_i / 1200)
+```
+
+At count = 1, `cents_i = 0` — no detuning. At count = 7 with D = 50 cents the copies are at −25, −16.7, −8.3, 0, +8.3, +16.7, +25 cents. One copy always lands at 0 cents (the centre) when count is odd.
+
+### Phase staggering
+
+When a note starts (`note_on`) all copies are given evenly-spaced initial phases instead of all starting at 0:
+
+```rust
+osc1s[i].set_freq(detuned_freq, sr);
+osc1s[i].set_phase(i as f32 / count as f32);
+```
+
+Without this, copies at nearly the same frequency would constructively interfere on note-on, producing a harsh transient burst before drifting apart. Staggered phases ensure they are already spread across the cycle at attack time.
+
+### Mixing
+
+All active copies are summed and normalised by count before being blended with Osc 2:
+
+```rust
+let mut osc1_out = 0.0f32;
+for osc in osc1s[..count].iter_mut() { osc1_out += osc.tick(); }
+osc1_out /= count as f32;
+```
+
+Dividing by `count` keeps the amplitude constant regardless of how many copies are running, so adding more voices does not require rebalancing the output gain.
+
+---
+
 ## Stereo Panning
 
 Each voice is panned to a fixed position in the stereo field. The **Spread** knob (0–1) controls how far apart the voices are. At spread = 0 all voices are centred (mono); at spread = 1 voice 0 is hard-left and voice 7 is hard-right.
@@ -435,6 +479,6 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 
 ## Where to Go Next
 
-1. **Unison / supersaw** — spawn N detuned oscillators per voice (typically 4–8) with randomised initial phases and spread across the stereo field; gives the dense "supersaw" lead sound found in classic analogue polysynths.
-2. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be an LFO target.
-3. **Modulation matrix** — route any LFO or envelope to any parameter (pitch, cutoff, resonance, pan, mix) via a flexible matrix rather than the current fixed targets.
+1. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be an LFO target.
+2. **Modulation matrix** — route any LFO or envelope to any parameter (pitch, cutoff, resonance, pan, mix) via a flexible matrix rather than the current fixed targets.
+3. **Per-voice unison stereo spread** — give each unison copy its own pan position within the voice rather than mixing to mono first; the eight copies would fan across the stereo field independently of the voice-level Spread knob.
