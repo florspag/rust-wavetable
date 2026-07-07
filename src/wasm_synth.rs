@@ -2,6 +2,7 @@ use wasm_bindgen::prelude::*;
 use crate::oscillator::Oscillator;
 use crate::adsr::Adsr;
 use crate::filter::Filter;
+use std::f32::consts::FRAC_PI_4;
 
 const VOICES: usize = 8;
 
@@ -9,9 +10,12 @@ struct Voice {
     osc1: Oscillator,
     osc2: Oscillator,
     env: Adsr,
+    filter: Filter,
     freq: f32,
     age: u64,        // incremented each note_on — lower = older = steal first
     auto_release: u64,
+    pan_l: f32,      // equal-power left gain  (precomputed from spread)
+    pan_r: f32,      // equal-power right gain (precomputed from spread)
 }
 
 impl Voice {
@@ -20,9 +24,12 @@ impl Voice {
             osc1: Oscillator::new(),
             osc2: Oscillator::new(),
             env: Adsr::new(sample_rate),
+            filter: Filter::new(sample_rate),
             freq: 0.0,
             age: 0,
             auto_release: 0,
+            pan_l: FRAC_PI_4.cos(),  // centre pan: cos(π/4) = 1/√2
+            pan_r: FRAC_PI_4.sin(),  // centre pan: sin(π/4) = 1/√2
         }
     }
 }
@@ -30,16 +37,35 @@ impl Voice {
 #[wasm_bindgen]
 pub struct Synth {
     voices: Vec<Voice>,
-    filter: Filter,
     sample_rate: f32,
     auto_release_samples: u64,
     voice_counter: u64,
-    detune_ratio: f32,  // 2^(cents/2400): osc1 = freq*ratio, osc2 = freq/ratio
-    osc2_mix: f32,      // 0 = osc1 only, 1 = equal blend of both
+    detune_ratio: f32,   // 2^(cents/2400): osc1 = freq*ratio, osc2 = freq/ratio
+    osc2_mix: f32,       // 0 = osc1 only, 1 = equal blend of both
     lfo: Oscillator,
-    lfo_depth: f32,     // 0.0–1.0
-    lfo_target: u32,    // 0=pitch, 1=cutoff, 2=mix
-    base_cutoff: f32,   // user-set cutoff before LFO modulation
+    lfo_depth: f32,      // 0.0–1.0
+    lfo_target: u32,     // 0=pitch, 1=cutoff, 2=mix
+    base_cutoff: f32,    // user-set filter cutoff (before LFO modulation)
+    base_resonance: f32, // user-set filter resonance
+    base_filter_type: u32,
+    spread: f32,         // 0 = mono, 1 = full stereo spread across 8 voices
+    last_left: f32,
+    last_right: f32,
+}
+
+// Private helpers — separate impl block so wasm_bindgen does not export them.
+impl Synth {
+    fn update_pans(&mut self) {
+        for (i, v) in self.voices.iter_mut().enumerate() {
+            let raw = if VOICES > 1 {
+                -1.0 + 2.0 * i as f32 / (VOICES - 1) as f32
+            } else { 0.0 };
+            let pan = raw * self.spread;           // [-spread, +spread]
+            let angle = (pan + 1.0) * FRAC_PI_4;  // [0, π/2]
+            v.pan_l = angle.cos();
+            v.pan_r = angle.sin();
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -48,9 +74,8 @@ impl Synth {
     pub fn new(sample_rate: f32) -> Self {
         let mut lfo = Oscillator::new();
         lfo.change_freq(1.0, sample_rate); // default: 1 Hz sine
-        Self {
+        let mut synth = Self {
             voices: (0..VOICES).map(|_| Voice::new(sample_rate)).collect(),
-            filter: Filter::new(sample_rate),
             sample_rate,
             auto_release_samples: (sample_rate * 0.5) as u64,
             voice_counter: 0,
@@ -59,8 +84,15 @@ impl Synth {
             lfo,
             lfo_depth: 0.0,
             lfo_target: 0,
-            base_cutoff: 20000.0,
-        }
+            base_cutoff: sample_rate * 0.49, // matches Filter::new() default — fully open
+            base_resonance: 0.707,
+            base_filter_type: 0,
+            spread: 0.0,
+            last_left: 0.0,
+            last_right: 0.0,
+        };
+        synth.update_pans();
+        synth
     }
 
     pub fn note_on(&mut self, freq: f32) {
@@ -77,10 +109,17 @@ impl Synth {
         let ar = self.auto_release_samples;
         let dr = self.detune_ratio;
         let sr = self.sample_rate;
+        let bc = self.base_cutoff;
+        let br = self.base_resonance;
+        let bt = self.base_filter_type;
         let v = &mut self.voices[idx];
         v.osc1.set_freq(freq * dr, sr);
         v.osc2.set_freq(freq / dr, sr);
         v.env.note_on();
+        // Reset filter to current global settings (stolen voice may have a mid-sweep state).
+        v.filter.set_cutoff(bc);
+        v.filter.set_resonance(br);
+        v.filter.set_type(bt);
         v.freq = freq;
         v.age = self.voice_counter;
         v.auto_release = ar;
@@ -115,8 +154,7 @@ impl Synth {
         }
     }
 
-    /// Detune in cents (0 = unison). Osc1 shifts up by half, osc2 shifts down
-    /// by half, so the centre pitch stays on the played note.
+    /// Detune in cents (0 = unison). Osc1 shifts up by half, osc2 down by half.
     pub fn set_detune(&mut self, cents: f32) {
         self.detune_ratio = 2f32.powf(cents / 2400.0);
     }
@@ -126,28 +164,80 @@ impl Synth {
         self.osc2_mix = mix.clamp(0.0, 1.0);
     }
 
-    pub fn set_waveform(&mut self, idx: u32) {
+    /// 0.0 = all voices centred (mono), 1.0 = voice 0 hard-left → voice 7 hard-right.
+    pub fn set_spread(&mut self, spread: f32) {
+        self.spread = spread.clamp(0.0, 1.0);
+        self.update_pans();
+    }
+
+    /// Stereo output — call get_left() / get_right() after each tick().
+    pub fn tick(&mut self) {
+        let osc2_mix   = self.osc2_mix;
+        let lfo_out    = self.lfo.tick();       // -1.0 to +1.0
+        let lfo_depth  = self.lfo_depth;
+        let lfo_target = self.lfo_target;
+
+        // Pitch: ±2 semitones at full depth.
+        let pitch_scale = 2f32.powf(lfo_out * lfo_depth * 2.0 / 12.0);
+
+        // Cutoff: pre-compute modulated frequency once, apply inside voice loop.
+        let mod_cutoff = if lfo_target == 1 {
+            (self.base_cutoff * 2f32.powf(lfo_out * lfo_depth * 3.0)).clamp(20.0, 20_000.0)
+        } else {
+            self.base_cutoff
+        };
+
+        // Mix: additive offset clamped to [0, 1].
+        let effective_mix = if lfo_target == 2 {
+            (osc2_mix + lfo_out * lfo_depth).clamp(0.0, 1.0)
+        } else {
+            osc2_mix
+        };
+
+        let mut left  = 0.0f32;
+        let mut right = 0.0f32;
+
         for v in self.voices.iter_mut() {
-            v.osc1.set_waveform(idx as usize);
+            if v.auto_release > 0 {
+                v.auto_release -= 1;
+                if v.auto_release == 0 { v.env.note_off(); }
+            }
+            let ps = if lfo_target == 0 { pitch_scale } else { 1.0 };
+            v.osc1.set_pitch_scale(ps);
+            v.osc2.set_pitch_scale(ps);
+            if v.env.is_active() {
+                if lfo_target == 1 {
+                    v.filter.set_cutoff(mod_cutoff);
+                }
+                let osc = (v.osc1.tick() + v.osc2.tick() * effective_mix) / (1.0 + effective_mix);
+                let filtered = v.filter.process(osc * v.env.tick());
+                left  += filtered * v.pan_l;
+                right += filtered * v.pan_r;
+            }
         }
+
+        // Soft-clip each channel independently.
+        self.last_left  = (left  * 0.3).tanh();
+        self.last_right = (right * 0.3).tanh();
+    }
+
+    pub fn get_left(&self)  -> f32 { self.last_left  }
+    pub fn get_right(&self) -> f32 { self.last_right }
+
+    pub fn set_waveform(&mut self, idx: u32) {
+        for v in self.voices.iter_mut() { v.osc1.set_waveform(idx as usize); }
     }
 
     pub fn set_osc2_waveform(&mut self, idx: u32) {
-        for v in self.voices.iter_mut() {
-            v.osc2.set_waveform(idx as usize);
-        }
+        for v in self.voices.iter_mut() { v.osc2.set_waveform(idx as usize); }
     }
 
     pub fn load_osc1_custom_table(&mut self, samples: &[f32]) {
-        for v in self.voices.iter_mut() {
-            v.osc1.load_custom_table(samples);
-        }
+        for v in self.voices.iter_mut() { v.osc1.load_custom_table(samples); }
     }
 
     pub fn load_osc2_custom_table(&mut self, samples: &[f32]) {
-        for v in self.voices.iter_mut() {
-            v.osc2.load_custom_table(samples);
-        }
+        for v in self.voices.iter_mut() { v.osc2.load_custom_table(samples); }
     }
 
     pub fn set_attack(&mut self, secs: f32) {
@@ -171,7 +261,7 @@ impl Synth {
         self.lfo.change_freq(hz.clamp(0.01, 20.0), self.sample_rate);
     }
 
-    /// LFO depth 0.0–1.0.  Pitch: ±2 semitones at 1.0.  Cutoff: ±3 octaves.  Mix: ±1.0.
+    /// LFO depth 0.0–1.0.
     pub fn set_lfo_depth(&mut self, depth: f32) {
         self.lfo_depth = depth.clamp(0.0, 1.0);
     }
@@ -187,59 +277,23 @@ impl Synth {
             }
         }
         if self.lfo_target != 1 {
-            self.filter.set_cutoff(self.base_cutoff);
+            let bc = self.base_cutoff;
+            for v in self.voices.iter_mut() { v.filter.set_cutoff(bc); }
         }
     }
 
     pub fn set_filter_cutoff(&mut self, hz: f32) {
         self.base_cutoff = hz;
-        self.filter.set_cutoff(hz);
+        for v in self.voices.iter_mut() { v.filter.set_cutoff(hz); }
     }
-    pub fn set_filter_resonance(&mut self, q: f32) { self.filter.set_resonance(q); }
-    pub fn set_filter_type(&mut self, t: u32) { self.filter.set_type(t); }
 
-    pub fn tick(&mut self) -> f32 {
-        let osc2_mix = self.osc2_mix;
-        let lfo_out   = self.lfo.tick();       // -1.0 to +1.0 (sine)
-        let lfo_depth = self.lfo_depth;
-        let lfo_target = self.lfo_target;
+    pub fn set_filter_resonance(&mut self, q: f32) {
+        self.base_resonance = q;
+        for v in self.voices.iter_mut() { v.filter.set_resonance(q); }
+    }
 
-        // Pitch: ±2 semitones at full depth.  2^(x*d*2/12) = 1.0 when d=0 or x=0.
-        let pitch_scale = 2f32.powf(lfo_out * lfo_depth * 2.0 / 12.0);
-
-        // Cutoff: ±3 octaves at full depth.
-        if lfo_target == 1 {
-            let cutoff = (self.base_cutoff * 2f32.powf(lfo_out * lfo_depth * 3.0))
-                .clamp(20.0, 20_000.0);
-            self.filter.set_cutoff(cutoff);
-        }
-
-        // Mix: additive offset clamped to [0, 1].
-        let effective_mix = if lfo_target == 2 {
-            (osc2_mix + lfo_out * lfo_depth).clamp(0.0, 1.0)
-        } else {
-            osc2_mix
-        };
-
-        let sum: f32 = self.voices.iter_mut().map(|v| {
-            if v.auto_release > 0 {
-                v.auto_release -= 1;
-                if v.auto_release == 0 { v.env.note_off(); }
-            }
-            // Apply pitch scale (1.0 when not targeting pitch or depth=0).
-            let ps = if lfo_target == 0 { pitch_scale } else { 1.0 };
-            v.osc1.set_pitch_scale(ps);
-            v.osc2.set_pitch_scale(ps);
-            if v.env.is_active() {
-                let osc = (v.osc1.tick() + v.osc2.tick() * effective_mix) / (1.0 + effective_mix);
-                osc * v.env.tick()
-            } else {
-                0.0
-            }
-        }).sum();
-
-        // Soft-clip the polyphonic mix via tanh.
-        let mixed = (sum * 0.3).tanh();
-        self.filter.process(mixed)
+    pub fn set_filter_type(&mut self, t: u32) {
+        self.base_filter_type = t;
+        for v in self.voices.iter_mut() { v.filter.set_type(t); }
     }
 }

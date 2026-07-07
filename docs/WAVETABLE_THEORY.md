@@ -231,7 +231,12 @@ In the browser GUI the ADSR canvas lets you drag control points directly on the 
 
 ## Biquad Filter
 
-After the oscillator, the signal passes through a second-order IIR (biquad) filter implemented with the Audio EQ Cookbook coefficients. Three modes are available:
+Each voice has its own independent biquad filter — a second-order IIR implemented with Audio EQ Cookbook coefficients. Keeping the filter per-voice means:
+
+- Voices don't bleed shared filter state into one another (a stolen voice's filter history does not colour the new note).
+- The LFO can modulate the cutoff on every active voice simultaneously without a single shared biquad accumulating different per-voice history.
+
+Three modes are available:
 
 | Mode | What it does |
 | ------- | ------------ |
@@ -250,11 +255,13 @@ The transfer function is computed via the Direct Form II transposed structure, w
 y[n] = b0·x[n] + b1·x[n−1] + b2·x[n−2] − a1·y[n−1] − a2·y[n−2]
 ```
 
+Global parameter changes (`set_filter_cutoff`, `set_filter_resonance`, `set_filter_type`) are propagated to all 8 voice filters immediately. The values are also stored as `base_cutoff`, `base_resonance`, and `base_filter_type` in `Synth` so that a stolen voice's filter can be re-initialised to the correct settings when its note slot is reused.
+
 ---
 
 ## Polyphony and Voice Management
 
-The synth maintains **8 voices** running in parallel. Each voice owns its own two `Oscillator` instances and an `Adsr`; the `Filter` is shared and applied to the final mix.
+The synth maintains **8 voices** running in parallel. Each voice owns two `Oscillator` instances, an `Adsr`, and a `Filter`; the filtered output is then panned into a stereo mix.
 
 ### Voice allocation
 
@@ -346,11 +353,12 @@ At `depth = 0` the exponent is always zero → `pitch_scale = 1.0` → no modula
 
 ### Filter cutoff modulation
 
-`set_filter_cutoff` stores the user-set value in `base_cutoff` separately from what the filter currently uses. Each sample `set_cutoff` is called with the modulated frequency:
+`set_filter_cutoff` stores the user-set value in `base_cutoff` separately from what the filter currently uses. Each tick the modulated cutoff is computed once and applied to every active voice:
 
 ```rust
-let cutoff = (base_cutoff * 2f32.powf(lfo_out * lfo_depth * 3.0)).clamp(20.0, 20_000.0);
-self.filter.set_cutoff(cutoff);
+let mod_cutoff = (base_cutoff * 2f32.powf(lfo_out * lfo_depth * 3.0)).clamp(20.0, 20_000.0);
+// inside the per-voice loop:
+if lfo_target == 1 { v.filter.set_cutoff(mod_cutoff); }
 ```
 
 The exponential scale (`2^(3×depth)` → up to 8×) gives the characteristic logarithmic filter sweep heard on classic synthesisers.
@@ -361,17 +369,48 @@ Changing targets immediately restores the parameter that was being modulated: pi
 
 ---
 
+## Stereo Panning
+
+Each voice is panned to a fixed position in the stereo field. The **Spread** knob (0–1) controls how far apart the voices are. At spread = 0 all voices are centred (mono); at spread = 1 voice 0 is hard-left and voice 7 is hard-right.
+
+### Voice positions
+
+Voices are distributed evenly across the spread range:
+
+```rust
+let raw = -1.0 + 2.0 * i as f32 / (VOICES - 1) as f32;  // -1 to +1
+let pan  = raw * self.spread;                              // -spread to +spread
+```
+
+Voice 0 gets `pan = -spread`, voice 7 gets `pan = +spread`, and the six middle voices land at equal intervals between them.
+
+### Equal-power panning
+
+Pan position `pan ∈ [-1, 1]` is converted to a stereo angle and then to per-channel gains:
+
+```rust
+let angle = (pan + 1.0) * FRAC_PI_4;  // maps [-1, +1] → [0, π/2]
+v.pan_l   = angle.cos();
+v.pan_r   = angle.sin();
+```
+
+At centre (`pan = 0`, angle = π/4): `cos = sin = 1/√2 ≈ 0.707`, so the voice appears equally in both channels. The constant-power identity `cos²θ + sin²θ = 1` ensures the perceived loudness stays the same at any pan position.
+
+The `pan_l` / `pan_r` values are precomputed in `Voice` fields and only recalculated when `set_spread` is called, so there is no per-sample overhead.
+
+---
+
 ## Signal Flow
 
 ```text
 Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(freq)
                         ↓                                           ↓
                Voice[0..8] allocated or stolen          updates both osc phase_incs
-               each voice: osc1 + osc2 + Adsr           + selects mip level for freq
-                        ↓                                      (no phase reset)
+               each voice: osc1 + osc2 + Adsr + Filter + pan_l/pan_r
+                        ↓
   LFO (sine oscillator, 0.01–20 Hz) — one target at a time:
     Pitch  →  pitch_scale = 2^(lfo × depth × 2/12)   → applied to osc phase advance
-    Cutoff →  base_cutoff × 2^(lfo × depth × 3)      → filter.set_cutoff() each sample
+    Cutoff →  base_cutoff × 2^(lfo × depth × 3)      → v.filter.set_cutoff() each voice
     Mix    →  (osc2_mix + lfo × depth).clamp(0, 1)   → effective_mix in voice blend
                         ↓
   per-voice tick():
@@ -380,13 +419,16 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
     osc_out = (s1 + s2 × effective_mix) / (1 + effective_mix)   ← amplitude-normalised blend
     osc_out × ADSR envelope level
                         ↓
-       sum all 8 voices
+    biquad filter per-voice (LP / HP / BP, base_cutoff [± LFO], Q)
                         ↓
-    tanh(sum × 0.3)   ← soft clip / normalise
+    filtered × pan_l  →  left_acc
+    filtered × pan_r  →  right_acc
                         ↓
-    biquad filter (LP / HP / BP, base_cutoff [± LFO], Q)
+  sum across all 8 voices → left_acc, right_acc
                         ↓
-    ScriptProcessorNode / AudioWorklet → speakers
+  tanh(left_acc × 0.3), tanh(right_acc × 0.3)   ← soft clip each channel
+                        ↓
+  ScriptProcessorNode (2 channels): get_left() / get_right() → speakers
 ```
 
 ---
@@ -395,4 +437,4 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 
 1. **Unison / supersaw** — spawn N detuned oscillators per voice (typically 4–8) with randomised initial phases and spread across the stereo field; gives the dense "supersaw" lead sound found in classic analogue polysynths.
 2. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be an LFO target.
-3. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.
+3. **Modulation matrix** — route any LFO or envelope to any parameter (pitch, cutoff, resonance, pan, mix) via a flexible matrix rather than the current fixed targets.

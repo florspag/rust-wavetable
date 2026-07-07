@@ -417,6 +417,11 @@
         <span class="knob-label">Osc2 Mix</span>
         <span class="knob-val" id="osc2-mix-val">0%</span>
       </div>
+      <div class="knob-wrap">
+        <canvas class="knob-canvas" id="osc-spread-knob"></canvas>
+        <span class="knob-label">Spread</span>
+        <span class="knob-val" id="osc-spread-val">0%</span>
+      </div>
     </div>
   </div>
 
@@ -704,13 +709,17 @@
       synth = new Synth(audioCtx.sampleRate);
 
       // ScriptProcessorNode — calls into WASM for each sample
-      processor = audioCtx.createScriptProcessor(256, 0, 1);
+      processor = audioCtx.createScriptProcessor(256, 0, 2);
       processor.onaudioprocess = e => {
-        const out = e.outputBuffer.getChannelData(0);
-        for (let i = 0; i < out.length; i++) {
-          const s = synth.tick();
-          out[i] = s;
-          oscRingBuf[oscWritePos & (OSC_BUF_SIZE - 1)] = s;
+        const outL = e.outputBuffer.getChannelData(0);
+        const outR = e.outputBuffer.getChannelData(1);
+        for (let i = 0; i < outL.length; i++) {
+          synth.tick();
+          const l = synth.get_left();
+          const r = synth.get_right();
+          outL[i] = l;
+          outR[i] = r;
+          oscRingBuf[oscWritePos & (OSC_BUF_SIZE - 1)] = (l + r) * 0.5;
           oscWritePos++;
         }
       };
@@ -1392,6 +1401,14 @@
       onChange: mix => {
         document.getElementById('osc2-mix-val').textContent = (mix * 100).toFixed(0) + '%';
         if (synth) synth.set_osc2_mix(mix);
+      },
+    });
+
+    const spreadKnob = new Knob(document.getElementById('osc-spread-knob'), {
+      min: 0, max: 1, value: 0, color: '#89b4fa',
+      onChange: s => {
+        document.getElementById('osc-spread-val').textContent = (s * 100).toFixed(0) + '%';
+        if (synth) synth.set_spread(s);
       },
     });
 
