@@ -6,6 +6,16 @@ use std::f32::consts::FRAC_PI_4;
 
 const VOICES: usize = 8;
 const MAX_UNISON: usize = 8;
+const MOD_SLOTS: usize = 4;
+
+/// One cell in the modulation matrix.
+/// source: 0 = None, 1 = LFO, 2 = Env
+/// dest:   0 = Pitch, 1 = Cutoff, 2 = Resonance, 3 = Mix
+#[derive(Clone, Copy)]
+struct ModSlot { source: u8, dest: u8, amount: f32 }
+impl ModSlot {
+    fn off() -> Self { Self { source: 0, dest: 0, amount: 0.0 } }
+}
 
 fn unison_cents(i: usize, count: usize, detune: f32) -> f32 {
     if count <= 1 { 0.0 }
@@ -51,9 +61,8 @@ pub struct Synth {
     unison_count: usize, // 1–MAX_UNISON active osc1 copies per voice
     unison_detune: f32,  // total cents spread across all unison oscillators (0–100)
     lfo: Oscillator,
-    lfo_depth: f32,      // 0.0–1.0
-    lfo_target: u32,     // 0=pitch, 1=cutoff, 2=mix
-    base_cutoff: f32,    // user-set filter cutoff (before LFO modulation)
+    mod_matrix: [ModSlot; MOD_SLOTS],
+    base_cutoff: f32,    // unmodulated filter cutoff
     base_resonance: f32, // user-set filter resonance
     base_filter_type: u32,
     spread: f32,         // 0 = mono, 1 = full stereo spread across 8 voices
@@ -107,8 +116,7 @@ impl Synth {
             unison_count: 1,
             unison_detune: 0.0,
             lfo,
-            lfo_depth: 0.0,
-            lfo_target: 0,
+            mod_matrix: [ModSlot::off(); MOD_SLOTS],
             base_cutoff: sample_rate * 0.49, // matches Filter::new() default — fully open
             base_resonance: 0.707,
             base_filter_type: 0,
@@ -221,28 +229,13 @@ impl Synth {
 
     /// Stereo output — call get_left() / get_right() after each tick().
     pub fn tick(&mut self) {
-        let osc2_mix   = self.osc2_mix;
-        let lfo_out    = self.lfo.tick();       // -1.0 to +1.0
-        let lfo_depth  = self.lfo_depth;
-        let lfo_target = self.lfo_target;
-        let count      = self.unison_count;
-
-        // Pitch: ±2 semitones at full depth.
-        let pitch_scale = 2f32.powf(lfo_out * lfo_depth * 2.0 / 12.0);
-
-        // Cutoff: pre-compute modulated frequency once, apply inside voice loop.
-        let mod_cutoff = if lfo_target == 1 {
-            (self.base_cutoff * 2f32.powf(lfo_out * lfo_depth * 3.0)).clamp(20.0, 20_000.0)
-        } else {
-            self.base_cutoff
-        };
-
-        // Mix: additive offset clamped to [0, 1].
-        let effective_mix = if lfo_target == 2 {
-            (osc2_mix + lfo_out * lfo_depth).clamp(0.0, 1.0)
-        } else {
-            osc2_mix
-        };
+        // Copy cheaply-cloneable state so we can mutably borrow voices below.
+        let count         = self.unison_count;
+        let lfo_val       = self.lfo.tick();   // -1.0 to +1.0
+        let mod_matrix    = self.mod_matrix;   // [ModSlot; 4] is Copy
+        let base_cutoff   = self.base_cutoff;
+        let base_resonance= self.base_resonance;
+        let osc2_mix      = self.osc2_mix;
 
         let mut left  = 0.0f32;
         let mut right = 0.0f32;
@@ -252,30 +245,56 @@ impl Synth {
                 v.auto_release -= 1;
                 if v.auto_release == 0 { v.env.note_off(); }
             }
-            let ps = if lfo_target == 0 { pitch_scale } else { 1.0 };
-            for osc in v.osc1s[..count].iter_mut() {
-                osc.set_pitch_scale(ps);
-            }
-            v.osc2.set_pitch_scale(ps);
-            if v.env.is_active() {
-                if lfo_target == 1 {
-                    v.filter.set_cutoff(mod_cutoff);
-                }
-                // Mix active unison oscillators to mono, then normalise by count.
-                let mut osc1_out = 0.0f32;
-                for osc in v.osc1s[..count].iter_mut() {
-                    osc1_out += osc.tick();
-                }
-                osc1_out /= count as f32;
+            if !v.env.is_active() { continue; }
 
-                let osc = (osc1_out + v.osc2.tick() * effective_mix) / (1.0 + effective_mix);
-                let filtered = v.filter.process(osc * v.env.tick());
-                left  += filtered * v.pan_l;
-                right += filtered * v.pan_r;
+            let env_val = v.env.tick();
+
+            // ── Accumulate per-voice modulation from each active slot ─────
+            let (mut pitch_mod, mut cutoff_mod, mut res_mod, mut mix_mod) = (0f32, 0f32, 0f32, 0f32);
+            for slot in &mod_matrix {
+                let src = match slot.source {
+                    1 => lfo_val,
+                    2 => env_val,
+                    _ => continue,
+                };
+                let c = src * slot.amount;
+                match slot.dest {
+                    0 => pitch_mod  += c,
+                    1 => cutoff_mod += c,
+                    2 => res_mod    += c,
+                    3 => mix_mod    += c,
+                    _ => {}
+                }
             }
+
+            // ── Apply modulation ──────────────────────────────────────────
+            // Pitch: amount=±1 gives ±2 semitones vibrato.
+            let pitch_scale = 2f32.powf(pitch_mod * 2.0 / 12.0);
+            for osc in v.osc1s[..count].iter_mut() { osc.set_pitch_scale(pitch_scale); }
+            v.osc2.set_pitch_scale(pitch_scale);
+
+            // Cutoff: amount=±1 sweeps ±3 octaves around base.
+            let mod_cutoff = (base_cutoff * 2f32.powf(cutoff_mod * 3.0)).clamp(20.0, 20_000.0);
+            v.filter.set_cutoff(mod_cutoff);
+
+            // Resonance: amount=±1 shifts Q by ±10.
+            let mod_res = (base_resonance + res_mod * 10.0).clamp(0.1, 20.0);
+            v.filter.set_resonance(mod_res);
+
+            // Mix: additive offset, clamped.
+            let effective_mix = (osc2_mix + mix_mod).clamp(0.0, 1.0);
+
+            // ── Audio path ────────────────────────────────────────────────
+            let mut osc1_out = 0.0f32;
+            for osc in v.osc1s[..count].iter_mut() { osc1_out += osc.tick(); }
+            osc1_out /= count as f32;
+
+            let osc = (osc1_out + v.osc2.tick() * effective_mix) / (1.0 + effective_mix);
+            let filtered = v.filter.process(osc * env_val);
+            left  += filtered * v.pan_l;
+            right += filtered * v.pan_r;
         }
 
-        // Soft-clip each channel independently.
         self.last_left  = (left  * 0.3).tanh();
         self.last_right = (right * 0.3).tanh();
     }
@@ -324,24 +343,20 @@ impl Synth {
         self.lfo.change_freq(hz.clamp(0.01, 20.0), self.sample_rate);
     }
 
-    /// LFO depth 0.0–1.0.
-    pub fn set_lfo_depth(&mut self, depth: f32) {
-        self.lfo_depth = depth.clamp(0.0, 1.0);
-    }
-
-    /// LFO target: 0 = pitch, 1 = filter cutoff, 2 = osc2 mix.
-    pub fn set_lfo_target(&mut self, target: u32) {
-        self.lfo_target = target % 3;
-        // Immediately restore clean state for the parameter we're leaving.
-        if self.lfo_target != 0 {
-            for v in self.voices.iter_mut() {
-                for osc in v.osc1s.iter_mut() { osc.set_pitch_scale(1.0); }
-                v.osc2.set_pitch_scale(1.0);
-            }
-        }
-        if self.lfo_target != 1 {
-            let bc = self.base_cutoff;
-            for v in self.voices.iter_mut() { v.filter.set_cutoff(bc); }
+    /// Configure one modulation matrix slot.
+    ///
+    /// - `slot`   — 0–3
+    /// - `source` — 0 = None, 1 = LFO, 2 = Env
+    /// - `dest`   — 0 = Pitch, 1 = Cutoff, 2 = Resonance, 3 = Mix
+    /// - `amount` — −1.0 to +1.0 (bipolar depth)
+    pub fn set_mod_slot(&mut self, slot: u32, source: u32, dest: u32, amount: f32) {
+        let i = slot as usize;
+        if i < MOD_SLOTS {
+            self.mod_matrix[i] = ModSlot {
+                source: source as u8,
+                dest:   dest   as u8,
+                amount: amount.clamp(-1.0, 1.0),
+            };
         }
     }
 

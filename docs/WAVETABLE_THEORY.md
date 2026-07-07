@@ -323,49 +323,76 @@ The browser GUI shows two labelled rows of waveform buttons — **Osc 1** (blue 
 
 ---
 
-## LFO
+## Modulation Matrix
 
-A single **LFO (Low-Frequency Oscillator)** runs in parallel with the audio voices and modulates one target at a time. Internally it is a plain `Oscillator` instance — the same struct used for audio voices — running at the audio sample rate but at a very low `phase_inc`. Waveform 0 (sine) is used, giving the smoothest modulation shape.
+The synth has a **4-slot modulation matrix**. Each slot independently connects a **source** signal to a **destination** parameter, with a bipolar **amount** (−1 to +1). Multiple slots can target the same destination — their contributions are summed before being applied.
 
-### Targets
+### Sources
 
-| Target | What is modulated | Depth range (depth = 1.0) |
-| ------ | ----------------- | ------------------------- |
-| **Pitch** | `phase_inc` of every active osc1 and osc2 via `pitch_scale` | ±2 semitones |
-| **Cutoff** | Filter cutoff around the user-set base frequency | ±3 octaves |
-| **Mix** | Osc2 blend level (`osc2_mix + lfo × depth`, clamped to [0, 1]) | full swing |
+| Source | Signal range | Description |
+| ------ | ------------ | ----------- |
+| **LFO** | −1 to +1 (bipolar) | A single sine `Oscillator` running at 0.01–20 Hz, shared across all voices |
+| **Env** | 0 to +1 (unipolar) | The current ADSR level of each individual voice — different per voice |
 
-### Pitch modulation
+The LFO is the same `Oscillator` struct used for audio, running at the audio sample rate but with a very low `phase_inc`. Only waveform 0 (sine) is used, giving the smoothest modulation shape.
 
-The `Oscillator` struct has a `pitch_scale: f32` field (default `1.0`) that is multiplied into the phase advance each sample:
+The Env source makes modulation inherently polyphonic: a voice in its attack stage sweeps differently from one mid-sustain, so notes naturally feel independent.
+
+### Destinations
+
+| Dest | Base value stored in | Scale at amount = ±1 |
+| ---- | -------------------- | -------------------- |
+| **Pitch** | — (relative to current freq) | ±2 semitones |
+| **Cutoff** | `base_cutoff` | ±3 octaves around base |
+| **Resonance** | `base_resonance` | ±10 Q units |
+| **Mix** | `osc2_mix` | ±1 full swing of osc2 blend |
+
+### Per-voice computation
+
+Every tick, each active voice independently accumulates the modulation contributions from all slots:
+
+```rust
+let env_val = v.env.tick();  // advance envelope once; use value for both amp and mod
+
+let (mut pitch_mod, mut cutoff_mod, mut res_mod, mut mix_mod) = (0f32, 0f32, 0f32, 0f32);
+for slot in &mod_matrix {
+    let src = match slot.source { 1 => lfo_val, 2 => env_val, _ => continue };
+    match slot.dest {
+        0 => pitch_mod  += src * slot.amount,
+        1 => cutoff_mod += src * slot.amount,
+        2 => res_mod    += src * slot.amount,
+        3 => mix_mod    += src * slot.amount,
+        _ => {}
+    }
+}
+
+let pitch_scale  = 2f32.powf(pitch_mod * 2.0 / 12.0);
+let mod_cutoff   = (base_cutoff * 2f32.powf(cutoff_mod * 3.0)).clamp(20.0, 20_000.0);
+let mod_res      = (base_resonance + res_mod * 10.0).clamp(0.1, 20.0);
+let effective_mix = (osc2_mix + mix_mod).clamp(0.0, 1.0);
+```
+
+Because modulation is recomputed fresh every sample from the stored base values, clearing or changing a slot takes effect in one sample — no explicit cleanup of stuck values is needed.
+
+### Pitch destination
+
+`pitch_scale` is applied by multiplying into the oscillator's phase advance:
 
 ```rust
 self.phase = (self.phase + self.phase_inc * self.pitch_scale) % 1.0;
 ```
 
-`wasm_synth` computes the scale from the LFO output and sets it on all active oscillators every tick:
+At `pitch_mod = 0`, `pitch_scale = 2^0 = 1.0` — no modulation. At `pitch_mod = ±1`, `pitch_scale = 2^(±2/12) ≈ ±12 %` — exactly ±2 semitones of vibrato or pitch bend.
+
+### Cutoff destination
+
+`base_cutoff` stores the user-set value. The exponential scale gives logarithmic sweeps matching human pitch perception:
 
 ```rust
-let pitch_scale = 2f32.powf(lfo_out * lfo_depth * 2.0 / 12.0);
+let mod_cutoff = (base_cutoff * 2f32.powf(cutoff_mod * 3.0)).clamp(20.0, 20_000.0);
 ```
 
-At `depth = 0` the exponent is always zero → `pitch_scale = 1.0` → no modulation. At `depth = 1.0` and `lfo_out = ±1` the scale is `2^(±2/12) ≈ ±12 %` — exactly ±2 semitones of vibrato.
-
-### Filter cutoff modulation
-
-`set_filter_cutoff` stores the user-set value in `base_cutoff` separately from what the filter currently uses. Each tick the modulated cutoff is computed once and applied to every active voice:
-
-```rust
-let mod_cutoff = (base_cutoff * 2f32.powf(lfo_out * lfo_depth * 3.0)).clamp(20.0, 20_000.0);
-// inside the per-voice loop:
-if lfo_target == 1 { v.filter.set_cutoff(mod_cutoff); }
-```
-
-The exponential scale (`2^(3×depth)` → up to 8×) gives the characteristic logarithmic filter sweep heard on classic synthesisers.
-
-### Target switching
-
-Changing targets immediately restores the parameter that was being modulated: pitch_scale resets to 1.0 for all oscillators, and the filter is reset to `base_cutoff`. This prevents stuck offsets when the user changes the target while the LFO is mid-cycle.
+`2^3 = 8×` at `cutoff_mod = +1` — three full octaves upward. Negative contributions sweep downward symmetrically. When no slot targets Cutoff, `cutoff_mod = 0` and `mod_cutoff = base_cutoff * 1.0 = base_cutoff` exactly.
 
 ---
 
@@ -452,18 +479,22 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
                Voice[0..8] allocated or stolen          updates both osc phase_incs
                each voice: osc1 + osc2 + Adsr + Filter + pan_l/pan_r
                         ↓
-  LFO (sine oscillator, 0.01–20 Hz) — one target at a time:
-    Pitch  →  pitch_scale = 2^(lfo × depth × 2/12)   → applied to osc phase advance
-    Cutoff →  base_cutoff × 2^(lfo × depth × 3)      → v.filter.set_cutoff() each voice
-    Mix    →  (osc2_mix + lfo × depth).clamp(0, 1)   → effective_mix in voice blend
+  Modulation matrix (4 slots, evaluated per-voice every sample):
+    source: LFO (global, −1…+1) or Env (per-voice, 0…+1)
+    Σ contributions → pitch_mod, cutoff_mod, res_mod, mix_mod
                         ↓
   per-voice tick():
-    osc1: freq × detune_ratio  →  mip table[waveform1][level]  →  sinc LUT × pitch_scale  →  s1
-    osc2: freq ÷ detune_ratio  →  mip table[waveform2][level]  →  sinc LUT × pitch_scale  →  s2
-    osc_out = (s1 + s2 × effective_mix) / (1 + effective_mix)   ← amplitude-normalised blend
-    osc_out × ADSR envelope level
+    env_val = env.tick()  ← used as both amplitude shaper AND Env mod source
+    pitch_scale  = 2^(pitch_mod × 2/12)
+    mod_cutoff   = base_cutoff × 2^(cutoff_mod × 3)
+    mod_res      = base_resonance + res_mod × 10
+    effective_mix = (osc2_mix + mix_mod).clamp(0, 1)
+    osc1[0..n]: freq × detune_ratio × unison_cents  →  mip table  →  sinc LUT × pitch_scale
+    osc2:       freq ÷ detune_ratio                 →  mip table  →  sinc LUT × pitch_scale
+    osc_out = (osc1_sum/n + osc2 × effective_mix) / (1 + effective_mix)
+    osc_out × env_val
                         ↓
-    biquad filter per-voice (LP / HP / BP, base_cutoff [± LFO], Q)
+    biquad filter per-voice (LP / HP / BP, mod_cutoff, mod_res)
                         ↓
     filtered × pan_l  →  left_acc
     filtered × pan_r  →  right_acc
@@ -479,6 +510,6 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 
 ## Where to Go Next
 
-1. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be an LFO target.
-2. **Modulation matrix** — route any LFO or envelope to any parameter (pitch, cutoff, resonance, pan, mix) via a flexible matrix rather than the current fixed targets.
+1. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be a mod matrix destination.
+2. **Second LFO** — add a second independent LFO as a third mod source (different rate and waveform for more complex motion).
 3. **Per-voice unison stereo spread** — give each unison copy its own pan position within the voice rather than mixing to mono first; the eight copies would fan across the stereo field independently of the voice-level Spread knob.

@@ -165,6 +165,63 @@
       touch-action: none;
     }
 
+    /* Modulation panel */
+    .mod-top-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 2rem;
+    }
+
+    .mod-matrix-section { flex: 1; min-width: 0; }
+
+    .mod-matrix-head {
+      display: flex;
+      gap: 0.4rem;
+      align-items: center;
+      font-size: 0.6rem;
+      color: #45475a;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.4rem;
+    }
+
+    #mod-matrix {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .mod-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .mod-btn {
+      height: 24px;
+      background: #1e1e2e;
+      border: 1px solid #313244;
+      border-radius: 4px;
+      color: #585b70;
+      font-family: inherit;
+      font-size: 0.7rem;
+      cursor: pointer;
+      padding: 0 0.5rem;
+      white-space: nowrap;
+      transition: background 0.1s, border-color 0.1s, color 0.1s;
+    }
+    .mod-btn:not(:disabled):hover { background: #313244; color: #cdd6f4; }
+    .mod-btn.mod-src-btn { min-width: 3rem; text-align: center; }
+    .mod-btn.mod-dst-btn { min-width: 4rem; text-align: center; }
+    .mod-btn.src-lfo { border-color: #cba6f7; color: #cba6f7; background: #2a1a3e; }
+    .mod-btn.src-env { border-color: #f9e2af; color: #f9e2af; background: #2e2a1a; }
+    .mod-btn.dst-on  { border-color: #89b4fa; color: #89b4fa; background: #1e3a5f; }
+    .mod-btn:disabled { opacity: 0.25; cursor: default; }
+
+    .mod-arrow { color: #313244; font-size: 0.85rem; flex-shrink: 0; }
+
+    .knob-canvas-sm { width: 36px; height: 36px; }
+
     /* Filter panel */
     .flt-row {
       display: flex;
@@ -472,23 +529,21 @@
   </div>
 
   <div class="panel">
-    <div class="panel-title">LFO</div>
-    <div class="flt-row">
+    <div class="panel-title">Modulation</div>
+    <div class="mod-top-row">
       <div class="knob-wrap">
-        <button class="flt-type-btn" id="lfo-target-btn">Pitch</button>
-        <span class="knob-label">Target</span>
+        <canvas class="knob-canvas" id="lfo-rate-knob"></canvas>
+        <span class="knob-label">LFO Rate</span>
+        <span class="knob-val" id="lfo-rate-val">1.00 Hz</span>
       </div>
-      <div class="flt-knobs">
-        <div class="knob-wrap">
-          <canvas class="knob-canvas" id="lfo-rate-knob"></canvas>
-          <span class="knob-label">Rate</span>
-          <span class="knob-val" id="lfo-rate-val">1.00 Hz</span>
+      <div class="mod-matrix-section">
+        <div class="mod-matrix-head">
+          <span style="min-width:3rem">Source</span>
+          <span style="min-width:0.9rem"></span>
+          <span style="min-width:4rem">Destination</span>
+          <span>Amount</span>
         </div>
-        <div class="knob-wrap">
-          <canvas class="knob-canvas" id="lfo-depth-knob"></canvas>
-          <span class="knob-label">Depth</span>
-          <span class="knob-val" id="lfo-depth-val">0%</span>
-        </div>
+        <div id="mod-matrix"></div>
       </div>
     </div>
   </div>
@@ -753,6 +808,7 @@
       audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
       await init();
       synth = new Synth(audioCtx.sampleRate);
+      modState.forEach((_, i) => syncModSlot(i));
 
       // ScriptProcessorNode — calls into WASM for each sample
       processor = audioCtx.createScriptProcessor(256, 0, 2);
@@ -1475,19 +1531,10 @@
       },
     });
 
-    // ── LFO ──────────────────────────────────────────────────────────────
+    // ── Modulation ────────────────────────────────────────────────────────
     function fmtRate(hz) {
       return hz < 1 ? hz.toFixed(2) + ' Hz' : hz.toFixed(1) + ' Hz';
     }
-
-    const lfoTargets = ['Pitch', 'Cutoff', 'Mix'];
-    let lfoTargetIdx = 0;
-    const lfoTargetBtn = document.getElementById('lfo-target-btn');
-    lfoTargetBtn.addEventListener('click', () => {
-      lfoTargetIdx = (lfoTargetIdx + 1) % 3;
-      lfoTargetBtn.textContent = lfoTargets[lfoTargetIdx];
-      if (synth) synth.set_lfo_target(lfoTargetIdx);
-    });
 
     const lfoRateKnob = new Knob(document.getElementById('lfo-rate-knob'), {
       min: 0.01, max: 20, value: 1.0, color: '#cba6f7', log: true,
@@ -1498,13 +1545,80 @@
     });
     document.getElementById('lfo-rate-val').textContent = fmtRate(lfoRateKnob.value);
 
-    const lfoDepthKnob = new Knob(document.getElementById('lfo-depth-knob'), {
-      min: 0, max: 1, value: 0, color: '#cba6f7',
-      onChange: depth => {
-        document.getElementById('lfo-depth-val').textContent = (depth * 100).toFixed(0) + '%';
-        if (synth) synth.set_lfo_depth(depth);
-      },
-    });
+    // Modulation matrix — 4 slots, each: source × dest × amount
+    const MOD_SOURCES = ['Off', 'LFO', 'Env'];
+    const MOD_DESTS   = ['Pitch', 'Cutoff', 'Res', 'Mix'];
+    const modState = Array.from({ length: 4 }, () => ({ source: 0, dest: 0, amount: 0 }));
+
+    function syncModSlot(i) {
+      const s = modState[i];
+      if (synth) synth.set_mod_slot(i, s.source, s.dest, s.amount);
+    }
+
+    (function buildModMatrix() {
+      const matrix = document.getElementById('mod-matrix');
+      modState.forEach((s, i) => {
+        const row = document.createElement('div');
+        row.className = 'mod-row';
+
+        const srcBtn = document.createElement('button');
+        srcBtn.className = 'mod-btn mod-src-btn';
+        srcBtn.textContent = MOD_SOURCES[s.source];
+
+        const arrow = document.createElement('span');
+        arrow.className = 'mod-arrow';
+        arrow.textContent = '→';
+
+        const dstBtn = document.createElement('button');
+        dstBtn.className = 'mod-btn mod-dst-btn';
+        dstBtn.textContent = MOD_DESTS[s.dest];
+        dstBtn.disabled = true;
+
+        const amtCanvas = document.createElement('canvas');
+        amtCanvas.className = 'knob-canvas knob-canvas-sm';
+
+        const amtVal = document.createElement('span');
+        amtVal.className = 'knob-val';
+        amtVal.textContent = '+0%';
+
+        const amtWrap = document.createElement('div');
+        amtWrap.className = 'knob-wrap';
+        amtWrap.append(amtCanvas, amtVal);
+
+        function updateSrcClass() {
+          srcBtn.className = 'mod-btn mod-src-btn' +
+            (s.source === 1 ? ' src-lfo' : s.source === 2 ? ' src-env' : '');
+          const off = s.source === 0;
+          dstBtn.disabled = off;
+          dstBtn.className = 'mod-btn mod-dst-btn' + (!off ? ' dst-on' : '');
+        }
+
+        srcBtn.addEventListener('click', () => {
+          s.source = (s.source + 1) % MOD_SOURCES.length;
+          srcBtn.textContent = MOD_SOURCES[s.source];
+          updateSrcClass();
+          syncModSlot(i);
+        });
+
+        dstBtn.addEventListener('click', () => {
+          s.dest = (s.dest + 1) % MOD_DESTS.length;
+          dstBtn.textContent = MOD_DESTS[s.dest];
+          syncModSlot(i);
+        });
+
+        row.append(srcBtn, arrow, dstBtn, amtWrap);
+        matrix.appendChild(row);
+
+        new Knob(amtCanvas, {
+          min: -1, max: 1, value: 0, color: '#cba6f7',
+          onChange: v => {
+            s.amount = v;
+            amtVal.textContent = (v >= 0 ? '+' : '') + Math.round(v * 100) + '%';
+            syncModSlot(i);
+          },
+        });
+      });
+    })();
   </script>
 </body>
 </html>

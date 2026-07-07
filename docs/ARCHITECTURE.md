@@ -29,13 +29,18 @@ flowchart TD
 
     ALLOC --> VOICE
 
-    LFO["LFO\nOscillator @ 0.01–20 Hz\none target at a time: Pitch / Cutoff / Mix"]
+    LFO["LFO\nOscillator @ 0.01–20 Hz\nsinusoidal · global"]
+    ENV_SRC["Env (per-voice)\ncurrent ADSR level\n0 → 1 (unipolar)"]
+    MOD["Mod Matrix — 4 slots\nsource × dest × amount (±1)\nΣ contributions per dest"]
     SPREAD["Spread knob\n0 = mono\n1 = voice 0 hard-left, voice 7 hard-right"]
 
-    LFO -. "pitch_scale = 2^(lfo×d×2/12)" .-> OSC1
-    LFO -. "pitch_scale" .-> OSC2
-    LFO -. "base_cutoff × 2^(lfo×d×3)" .-> FLT
-    LFO -. "(osc2_mix + lfo×d).clamp(0,1)" .-> BLEND
+    LFO -. "lfo_val (−1…+1)" .-> MOD
+    ENV_SRC -. "env_val (0…+1)\nper-voice" .-> MOD
+    MOD -. "pitch_scale = 2^(Σ × 2/12)" .-> OSC1
+    MOD -. "pitch_scale" .-> OSC2
+    MOD -. "mod_cutoff = base×2^(Σ×3)" .-> FLT
+    MOD -. "mod_res = base_res + Σ×10" .-> FLT
+    MOD -. "effective_mix = osc2_mix + Σ" .-> BLEND
     SPREAD -. "pan = voice_pos × spread" .-> PAN
 
     SUM["Stereo Sum\nΣ(filtered × pan_l)   Σ(filtered × pan_r)"]
@@ -68,7 +73,7 @@ flowchart TD
     class ENV env
     class FLT flt
     class PAN pan
-    class LFO,SPREAD lfo
+    class LFO,ENV_SRC,MOD,SPREAD lfo
     class OUTL,OUTR,SPK output
     class MIDI,FREQ ctrl
     class ALLOC io
@@ -85,7 +90,9 @@ flowchart TD
 | **ADSR** | yellow | attack / decay / sustain / release; rate = 1/(time × sr) | `adsr.rs` |
 | **Biquad Filter** | purple | LP / HP / BP; `base_cutoff`, `base_resonance`; Direct Form II T | `filter.rs` |
 | **Stereo Pan** | cyan | equal-power cos/sin; `spread` distributes 8 voices −1 → +1 | `wasm_synth.rs` |
-| **LFO** | purple (dashed) | reuses `Oscillator` at very low `phase_inc`; depth 0–1 | `wasm_synth.rs` |
+| **LFO** | purple (dashed) | reuses `Oscillator` at very low `phase_inc`; sine; global | `wasm_synth.rs` |
+| **Env (source)** | purple (dashed) | per-voice ADSR level (0–1) sampled once per tick; same value used for amplitude | `wasm_synth.rs` |
+| **Mod Matrix** | purple (dashed) | 4 slots: source × dest × amount (±1); Σ contributions per dest; recomputed every sample, no cleanup needed | `wasm_synth.rs` |
 | **Soft Clip** | — | `tanh(sum × 0.3)`; single voice passes almost linear, 8 voices saturate gracefully | `wasm_synth.rs` |
 
 For the theory behind each block see [WAVETABLE_THEORY.md](WAVETABLE_THEORY.md).
