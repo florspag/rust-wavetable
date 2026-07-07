@@ -70,6 +70,7 @@ Open [http://localhost:8080](http://localhost:8080).
 | ------- | ----------- |
 | **Oscilloscope** | Live waveform preview — grey when idle, blue when playing |
 | **Waveform** | Two independent oscillators per voice, each with its own row of 8 shape buttons (Osc 1 = blue, Osc 2 = green); selecting Custom reveals a dedicated draw canvas for that oscillator — both canvases can be open at once for independent user-drawn shapes; **Detune** knob (0–100¢) pitches the oscillators symmetrically apart; **Osc2 Mix** knob (0–100%) blends osc2 into the output |
+| **LFO** | Single sine LFO (0.01–20 Hz) with a cycling **Target** button (Pitch → Cutoff → Mix), **Rate** knob (log scale), and **Depth** knob (0–100%); Pitch gives ±2 semitones vibrato, Cutoff sweeps ±3 octaves around the filter base frequency, Mix modulates the osc2 blend level |
 | **ADSR Envelope** | Interactive canvas — drag the green handle (X = attack time), yellow handle (X = decay time, Y = sustain level), red handle (X = release time) |
 | **Filter** | Biquad filter with a cycling type selector (LP → HP → BP → LP), two rotary knobs (Cutoff log 20 Hz–20 kHz, Resonance 0.1–20), and a frequency-response display |
 | **Keyboard** | 5-octave piano (C2–C7); click/touch keys or use `A W S E D F T G Y H U J K` for C4–C5; supports multi-touch and up to 8 simultaneous notes |

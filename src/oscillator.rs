@@ -39,6 +39,7 @@ pub struct Oscillator {
     active_mip: usize,        // updated by set_freq / change_freq
     phase: f32,
     phase_inc: f32,
+    pitch_scale: f32,         // LFO pitch modulation multiplier (1.0 = no mod)
 }
 
 impl Oscillator {
@@ -52,6 +53,7 @@ impl Oscillator {
             active_mip: 0,
             phase: 0.0,
             phase_inc: 0.0,
+            pitch_scale: 1.0,
         }
     }
 
@@ -65,6 +67,10 @@ impl Oscillator {
         self.phase_inc = freq / sr;
         self.active_mip = wavetable::select_mip_level(freq, sr);
         // phase preserved → no click when sliding pitch live
+    }
+
+    pub fn set_pitch_scale(&mut self, scale: f32) {
+        self.pitch_scale = scale;
     }
 
     pub fn set_waveform(&mut self, idx: usize) {
@@ -113,7 +119,7 @@ impl Oscillator {
             s += table[idx] * (w0[j] + alpha * (w1[j] - w0[j]));
         }
 
-        self.phase = (self.phase + self.phase_inc) % 1.0;
+        self.phase = (self.phase + self.phase_inc * self.pitch_scale) % 1.0;
         s
     }
 }

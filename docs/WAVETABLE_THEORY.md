@@ -316,6 +316,51 @@ The browser GUI shows two labelled rows of waveform buttons — **Osc 1** (blue 
 
 ---
 
+## LFO
+
+A single **LFO (Low-Frequency Oscillator)** runs in parallel with the audio voices and modulates one target at a time. Internally it is a plain `Oscillator` instance — the same struct used for audio voices — running at the audio sample rate but at a very low `phase_inc`. Waveform 0 (sine) is used, giving the smoothest modulation shape.
+
+### Targets
+
+| Target | What is modulated | Depth range (depth = 1.0) |
+| ------ | ----------------- | ------------------------- |
+| **Pitch** | `phase_inc` of every active osc1 and osc2 via `pitch_scale` | ±2 semitones |
+| **Cutoff** | Filter cutoff around the user-set base frequency | ±3 octaves |
+| **Mix** | Osc2 blend level (`osc2_mix + lfo × depth`, clamped to [0, 1]) | full swing |
+
+### Pitch modulation
+
+The `Oscillator` struct has a `pitch_scale: f32` field (default `1.0`) that is multiplied into the phase advance each sample:
+
+```rust
+self.phase = (self.phase + self.phase_inc * self.pitch_scale) % 1.0;
+```
+
+`wasm_synth` computes the scale from the LFO output and sets it on all active oscillators every tick:
+
+```rust
+let pitch_scale = 2f32.powf(lfo_out * lfo_depth * 2.0 / 12.0);
+```
+
+At `depth = 0` the exponent is always zero → `pitch_scale = 1.0` → no modulation. At `depth = 1.0` and `lfo_out = ±1` the scale is `2^(±2/12) ≈ ±12 %` — exactly ±2 semitones of vibrato.
+
+### Filter cutoff modulation
+
+`set_filter_cutoff` stores the user-set value in `base_cutoff` separately from what the filter currently uses. Each sample `set_cutoff` is called with the modulated frequency:
+
+```rust
+let cutoff = (base_cutoff * 2f32.powf(lfo_out * lfo_depth * 3.0)).clamp(20.0, 20_000.0);
+self.filter.set_cutoff(cutoff);
+```
+
+The exponential scale (`2^(3×depth)` → up to 8×) gives the characteristic logarithmic filter sweep heard on classic synthesisers.
+
+### Target switching
+
+Changing targets immediately restores the parameter that was being modulated: pitch_scale resets to 1.0 for all oscillators, and the filter is reset to `base_cutoff`. This prevents stuck offsets when the user changes the target while the LFO is mid-cycle.
+
+---
+
 ## Signal Flow
 
 ```text
@@ -324,17 +369,22 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
                Voice[0..8] allocated or stolen          updates both osc phase_incs
                each voice: osc1 + osc2 + Adsr           + selects mip level for freq
                         ↓                                      (no phase reset)
+  LFO (sine oscillator, 0.01–20 Hz) — one target at a time:
+    Pitch  →  pitch_scale = 2^(lfo × depth × 2/12)   → applied to osc phase advance
+    Cutoff →  base_cutoff × 2^(lfo × depth × 3)      → filter.set_cutoff() each sample
+    Mix    →  (osc2_mix + lfo × depth).clamp(0, 1)   → effective_mix in voice blend
+                        ↓
   per-voice tick():
-    osc1: freq × detune_ratio  →  mip table[waveform1][level]  →  sinc LUT  →  s1
-    osc2: freq ÷ detune_ratio  →  mip table[waveform2][level]  →  sinc LUT  →  s2
-    osc_out = (s1 + s2 × mix) / (1 + mix)   ← amplitude-normalised blend
+    osc1: freq × detune_ratio  →  mip table[waveform1][level]  →  sinc LUT × pitch_scale  →  s1
+    osc2: freq ÷ detune_ratio  →  mip table[waveform2][level]  →  sinc LUT × pitch_scale  →  s2
+    osc_out = (s1 + s2 × effective_mix) / (1 + effective_mix)   ← amplitude-normalised blend
     osc_out × ADSR envelope level
                         ↓
        sum all 8 voices
                         ↓
     tanh(sum × 0.3)   ← soft clip / normalise
                         ↓
-    biquad filter (LP / HP / BP, cutoff, Q)
+    biquad filter (LP / HP / BP, base_cutoff [± LFO], Q)
                         ↓
     ScriptProcessorNode / AudioWorklet → speakers
 ```
@@ -345,5 +395,4 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 
 1. **Unison / supersaw** — spawn N detuned oscillators per voice (typically 4–8) with randomised initial phases and spread across the stereo field; gives the dense "supersaw" lead sound found in classic analogue polysynths.
 2. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be an LFO target.
-3. **LFO** — a low-frequency oscillator (0.01–20 Hz) that modulates pitch, filter cutoff, or oscillator mix over time; the same `Oscillator` struct can be reused at a very low `phase_inc`.
-4. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.
+3. **Per-voice filter** — move the `Filter` inside each `Voice` for independent cutoff envelopes; stereo panning per voice.

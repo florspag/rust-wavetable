@@ -420,6 +420,28 @@
     </div>
   </div>
 
+  <div class="panel">
+    <div class="panel-title">LFO</div>
+    <div class="flt-row">
+      <div class="knob-wrap">
+        <button class="flt-type-btn" id="lfo-target-btn">Pitch</button>
+        <span class="knob-label">Target</span>
+      </div>
+      <div class="flt-knobs">
+        <div class="knob-wrap">
+          <canvas class="knob-canvas" id="lfo-rate-knob"></canvas>
+          <span class="knob-label">Rate</span>
+          <span class="knob-val" id="lfo-rate-val">1.00 Hz</span>
+        </div>
+        <div class="knob-wrap">
+          <canvas class="knob-canvas" id="lfo-depth-knob"></canvas>
+          <span class="knob-label">Depth</span>
+          <span class="knob-val" id="lfo-depth-val">0%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="two-col">
     <div class="panel">
       <div class="panel-title">ADSR Envelope — drag handles to edit</div>
@@ -1370,6 +1392,37 @@
       onChange: mix => {
         document.getElementById('osc2-mix-val').textContent = (mix * 100).toFixed(0) + '%';
         if (synth) synth.set_osc2_mix(mix);
+      },
+    });
+
+    // ── LFO ──────────────────────────────────────────────────────────────
+    function fmtRate(hz) {
+      return hz < 1 ? hz.toFixed(2) + ' Hz' : hz.toFixed(1) + ' Hz';
+    }
+
+    const lfoTargets = ['Pitch', 'Cutoff', 'Mix'];
+    let lfoTargetIdx = 0;
+    const lfoTargetBtn = document.getElementById('lfo-target-btn');
+    lfoTargetBtn.addEventListener('click', () => {
+      lfoTargetIdx = (lfoTargetIdx + 1) % 3;
+      lfoTargetBtn.textContent = lfoTargets[lfoTargetIdx];
+      if (synth) synth.set_lfo_target(lfoTargetIdx);
+    });
+
+    const lfoRateKnob = new Knob(document.getElementById('lfo-rate-knob'), {
+      min: 0.01, max: 20, value: 1.0, color: '#cba6f7', log: true,
+      onChange: hz => {
+        document.getElementById('lfo-rate-val').textContent = fmtRate(hz);
+        if (synth) synth.set_lfo_rate(hz);
+      },
+    });
+    document.getElementById('lfo-rate-val').textContent = fmtRate(lfoRateKnob.value);
+
+    const lfoDepthKnob = new Knob(document.getElementById('lfo-depth-knob'), {
+      min: 0, max: 1, value: 0, color: '#cba6f7',
+      onChange: depth => {
+        document.getElementById('lfo-depth-val').textContent = (depth * 100).toFixed(0) + '%';
+        if (synth) synth.set_lfo_depth(depth);
       },
     });
   </script>
