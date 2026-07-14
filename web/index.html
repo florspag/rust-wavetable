@@ -213,8 +213,9 @@
     .mod-btn:not(:disabled):hover { background: #313244; color: #cdd6f4; }
     .mod-btn.mod-src-btn { min-width: 3rem; text-align: center; }
     .mod-btn.mod-dst-btn { min-width: 4rem; text-align: center; }
-    .mod-btn.src-lfo { border-color: #cba6f7; color: #cba6f7; background: #2a1a3e; }
-    .mod-btn.src-env { border-color: #f9e2af; color: #f9e2af; background: #2e2a1a; }
+    .mod-btn.src-lfo  { border-color: #cba6f7; color: #cba6f7; background: #2a1a3e; }
+    .mod-btn.src-env  { border-color: #f9e2af; color: #f9e2af; background: #2e2a1a; }
+    .mod-btn.src-lfo2 { border-color: #74c7ec; color: #74c7ec; background: #1a2a2e; }
     .mod-btn.dst-on  { border-color: #89b4fa; color: #89b4fa; background: #1e3a5f; }
     .mod-btn:disabled { opacity: 0.25; cursor: default; }
 
@@ -536,6 +537,11 @@
         <span class="knob-label">LFO Rate</span>
         <span class="knob-val" id="lfo-rate-val">1.00 Hz</span>
       </div>
+      <div class="knob-wrap">
+        <canvas class="knob-canvas" id="lfo2-rate-knob"></canvas>
+        <span class="knob-label">LFO 2 Rate</span>
+        <span class="knob-val" id="lfo2-rate-val">0.50 Hz</span>
+      </div>
       <div class="mod-matrix-section">
         <div class="mod-matrix-head">
           <span style="min-width:3rem">Source</span>
@@ -807,28 +813,44 @@
     async function startAudio() {
       if (audioCtx) return;
       statusEl.textContent = 'Loading WASM...';
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
-      await init();
-      synth = new Synth(audioCtx.sampleRate);
-      modState.forEach((_, i) => syncModSlot(i));
+      // Keep ctx local until fully connected — audioCtx stays null so the
+      // user can retry if anything throws before processor.connect().
+      let ctx;
+      try {
+        ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+        await init('./pkg/rust_wavetable_bg.wasm?' + Date.now());
+        synth = new Synth(ctx.sampleRate);
+        modState.forEach((_, i) => syncModSlot(i));
 
-      // ScriptProcessorNode — calls into WASM for each sample
-      processor = audioCtx.createScriptProcessor(256, 0, 2);
-      processor.onaudioprocess = e => {
-        const outL = e.outputBuffer.getChannelData(0);
-        const outR = e.outputBuffer.getChannelData(1);
-        for (let i = 0; i < outL.length; i++) {
-          synth.tick();
-          const l = synth.get_left();
-          const r = synth.get_right();
-          outL[i] = l;
-          outR[i] = r;
-          oscRingBuf[oscWritePos & (OSC_BUF_SIZE - 1)] = (l + r) * 0.5;
-          oscWritePos++;
-        }
-      };
-      processor.connect(audioCtx.destination);
-      statusEl.textContent = 'Ready';
+        // ScriptProcessorNode — calls into WASM for each sample
+        processor = ctx.createScriptProcessor(256, 0, 2);
+        processor.onaudioprocess = e => {
+          const outL = e.outputBuffer.getChannelData(0);
+          const outR = e.outputBuffer.getChannelData(1);
+          for (let i = 0; i < outL.length; i++) {
+            synth.tick();
+            const l = synth.get_left();
+            const r = synth.get_right();
+            outL[i] = l;
+            outR[i] = r;
+            oscRingBuf[oscWritePos & (OSC_BUF_SIZE - 1)] = (l + r) * 0.5;
+            oscWritePos++;
+          }
+        };
+        processor.connect(ctx.destination);
+        // Audio is live — commit the context
+        audioCtx = ctx;
+        statusEl.textContent = 'Ready';
+      } catch (e) {
+        try { ctx?.close(); } catch (_) {}
+        synth = null; processor = null;
+        statusEl.textContent = 'Audio error — click a key to retry';
+        return;
+      }
+      // Non-critical: push current knob positions to the new synth.
+      // Audio is already running, so these throwing cannot break playback.
+      synth.set_lfo_rate(lfoRateKnob.value);
+      synth.set_lfo2_rate(lfo2RateKnob.value);
     }
 
     // ── Key interaction ─────────────────────────────────────────────────
@@ -1547,8 +1569,17 @@
     });
     document.getElementById('lfo-rate-val').textContent = fmtRate(lfoRateKnob.value);
 
+    const lfo2RateKnob = new Knob(document.getElementById('lfo2-rate-knob'), {
+      min: 0.01, max: 20, value: 0.5, color: '#74c7ec', log: true,
+      onChange: hz => {
+        document.getElementById('lfo2-rate-val').textContent = fmtRate(hz);
+        if (synth) synth.set_lfo2_rate(hz);
+      },
+    });
+    document.getElementById('lfo2-rate-val').textContent = fmtRate(lfo2RateKnob.value);
+
     // Modulation matrix — 4 slots, each: source × dest × amount
-    const MOD_SOURCES = ['Off', 'LFO', 'Env'];
+    const MOD_SOURCES = ['Off', 'LFO', 'Env', 'LFO2'];
     const MOD_DESTS   = ['Pitch', 'Cutoff', 'Res', 'Mix'];
     const modState = Array.from({ length: 4 }, () => ({ source: 0, dest: 0, amount: 0 }));
 
@@ -1589,7 +1620,7 @@
 
         function updateSrcClass() {
           srcBtn.className = 'mod-btn mod-src-btn' +
-            (s.source === 1 ? ' src-lfo' : s.source === 2 ? ' src-env' : '');
+            (s.source === 1 ? ' src-lfo' : s.source === 2 ? ' src-env' : s.source === 3 ? ' src-lfo2' : '');
           const off = s.source === 0;
           dstBtn.disabled = off;
           dstBtn.className = 'mod-btn mod-dst-btn' + (!off ? ' dst-on' : '');

@@ -331,10 +331,11 @@ The synth has a **4-slot modulation matrix**. Each slot independently connects a
 
 | Source | Signal range | Description |
 | ------ | ------------ | ----------- |
-| **LFO** | −1 to +1 (bipolar) | A single sine `Oscillator` running at 0.01–20 Hz, shared across all voices |
+| **LFO 1** | −1 to +1 (bipolar) | Sine `Oscillator` running at 0.01–20 Hz, global (shared across all voices); default 1 Hz |
+| **LFO 2** | −1 to +1 (bipolar) | Independent second sine `Oscillator` at 0.01–20 Hz; default 0.25 Hz — allows two modulation rates simultaneously |
 | **Env** | 0 to +1 (unipolar) | The current ADSR level of each individual voice — different per voice |
 
-The LFO is the same `Oscillator` struct used for audio, running at the audio sample rate but with a very low `phase_inc`. Only waveform 0 (sine) is used, giving the smoothest modulation shape.
+Both LFOs reuse the same `Oscillator` struct used for audio, running at the audio sample rate with a very low `phase_inc`. Sine (waveform 0) is used for the smoothest modulation shape. Having two independent LFOs lets you, for example, apply fast vibrato (LFO 1 at 5 Hz on Pitch) and a slow filter sweep (LFO 2 at 0.1 Hz on Cutoff) simultaneously.
 
 The Env source makes modulation inherently polyphonic: a voice in its attack stage sweeps differently from one mid-sustain, so notes naturally feel independent.
 
@@ -356,7 +357,7 @@ let env_val = v.env.tick();  // advance envelope once; use value for both amp an
 
 let (mut pitch_mod, mut cutoff_mod, mut res_mod, mut mix_mod) = (0f32, 0f32, 0f32, 0f32);
 for slot in &mod_matrix {
-    let src = match slot.source { 1 => lfo_val, 2 => env_val, _ => continue };
+    let src = match slot.source { 1 => lfo_val, 2 => env_val, 3 => lfo2_val, _ => continue };
     match slot.dest {
         0 => pitch_mod  += src * slot.amount,
         1 => cutoff_mod += src * slot.amount,
@@ -480,7 +481,7 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
                each voice: osc1 + osc2 + Adsr + Filter + pan_l/pan_r
                         ↓
   Modulation matrix (4 slots, evaluated per-voice every sample):
-    source: LFO (global, −1…+1) or Env (per-voice, 0…+1)
+    source: LFO 1 / LFO 2 (global, −1…+1) or Env (per-voice, 0…+1)
     Σ contributions → pitch_mod, cutoff_mod, res_mod, mix_mod
                         ↓
   per-voice tick():
@@ -511,5 +512,5 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 ## Where to Go Next
 
 1. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be a mod matrix destination.
-2. **Second LFO** — add a second independent LFO as a third mod source (different rate and waveform for more complex motion).
-3. **Per-voice unison stereo spread** — give each unison copy its own pan position within the voice rather than mixing to mono first; the eight copies would fan across the stereo field independently of the voice-level Spread knob.
+2. **Per-voice unison stereo spread** — give each unison copy its own pan position within the voice rather than mixing to mono first; the eight copies would fan across the stereo field independently of the voice-level Spread knob.
+3. **LFO waveform selector** — expose the `set_waveform` call on the LFO oscillators so LFOs can run as triangle, saw, or square shapes (useful for hard pitch-step effects or sawtooth filter sweeps).

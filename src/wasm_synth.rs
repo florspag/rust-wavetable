@@ -61,6 +61,7 @@ pub struct Synth {
     unison_count: usize, // 1–MAX_UNISON active osc1 copies per voice
     unison_detune: f32,  // total cents spread across all unison oscillators (0–100)
     lfo: Oscillator,
+    lfo2: Oscillator,
     mod_matrix: [ModSlot; MOD_SLOTS],
     base_cutoff: f32,    // unmodulated filter cutoff
     base_resonance: f32, // user-set filter resonance
@@ -106,6 +107,8 @@ impl Synth {
     pub fn new(sample_rate: f32) -> Self {
         let mut lfo = Oscillator::new();
         lfo.change_freq(1.0, sample_rate); // default: 1 Hz sine
+        let mut lfo2 = Oscillator::new();
+        lfo2.change_freq(0.5, sample_rate); // default: 0.5 Hz sine
         let mut synth = Self {
             voices: (0..VOICES).map(|_| Voice::new(sample_rate)).collect(),
             sample_rate,
@@ -116,6 +119,7 @@ impl Synth {
             unison_count: 1,
             unison_detune: 0.0,
             lfo,
+            lfo2,
             mod_matrix: [ModSlot::off(); MOD_SLOTS],
             base_cutoff: sample_rate * 0.49, // matches Filter::new() default — fully open
             base_resonance: 0.707,
@@ -231,7 +235,8 @@ impl Synth {
     pub fn tick(&mut self) {
         // Copy cheaply-cloneable state so we can mutably borrow voices below.
         let count         = self.unison_count;
-        let lfo_val       = self.lfo.tick();   // -1.0 to +1.0
+        let lfo_val       = self.lfo.tick();    // -1.0 to +1.0
+        let lfo2_val      = self.lfo2.tick();  // -1.0 to +1.0
         let mod_matrix    = self.mod_matrix;   // [ModSlot; 4] is Copy
         let base_cutoff   = self.base_cutoff;
         let base_resonance= self.base_resonance;
@@ -255,6 +260,7 @@ impl Synth {
                 let src = match slot.source {
                     1 => lfo_val,
                     2 => env_val,
+                    3 => lfo2_val,
                     _ => continue,
                 };
                 let c = src * slot.amount;
@@ -338,9 +344,14 @@ impl Synth {
         for v in self.voices.iter_mut() { v.env.set_release(secs); }
     }
 
-    /// LFO rate in Hz (clamped to 0.01–20).
+    /// LFO 1 rate in Hz (clamped to 0.01–20).
     pub fn set_lfo_rate(&mut self, hz: f32) {
         self.lfo.change_freq(hz.clamp(0.01, 20.0), self.sample_rate);
+    }
+
+    /// LFO 2 rate in Hz (clamped to 0.01–20).
+    pub fn set_lfo2_rate(&mut self, hz: f32) {
+        self.lfo2.change_freq(hz.clamp(0.01, 20.0), self.sample_rate);
     }
 
     /// Configure one modulation matrix slot.
