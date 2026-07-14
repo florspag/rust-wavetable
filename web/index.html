@@ -584,7 +584,7 @@
   </div>
 
   <div class="panel">
-    <div class="panel-title">Keyboard — C2 to C7</div>
+    <div class="panel-title">Keyboard — C0 to C7</div>
     <div class="piano-wrap">
       <div class="piano" id="piano"></div>
     </div>
@@ -599,16 +599,16 @@
       <span class="freq-note" id="freq-note">A4</span>
     </div>
     <input type="range" id="freq-slider" min="0" max="1000" value="500">
-    <div class="freq-range-labels"><span>20 Hz</span><span>4000 Hz</span></div>
+    <div class="freq-range-labels"><span>16 Hz</span><span>4000 Hz</span></div>
   </div>
 
   <script type="module">
     import init, { Synth } from './pkg/rust_wavetable.js';
 
-    // ── Piano layout (C2–C7, 5 octaves) ────────────────────────────────
+    // ── Piano layout (C0–C7, 7 octaves) ────────────────────────────────
     const NOTE_NAMES  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     const WHITE_SEMI  = new Set([0, 2, 4, 5, 7, 9, 11]);
-    const PIANO_START = 36;  // C2
+    const PIANO_START = 12;  // C0
     const PIANO_END   = 96;  // C7
     const WW = 28, BW = 17;  // white / black key widths (px)
 
@@ -657,8 +657,8 @@
       pianoEl.appendChild(el);
     });
 
-    // ── Frequency slider (logarithmic: 20 Hz – 4000 Hz) ────────────────
-    const FREQ_MIN = 20, FREQ_MAX = 4000;
+    // ── Frequency slider (logarithmic: 16 Hz – 4000 Hz) ────────────────
+    const FREQ_MIN = 16, FREQ_MAX = 4000;
 
     function sliderToFreq(v) {
       return FREQ_MIN * Math.pow(FREQ_MAX / FREQ_MIN, v / 1000);
@@ -750,14 +750,16 @@
         // Show ~2.5 cycles at the current frequency, capped to half the buffer.
         const displaySamples = Math.max(256,
           Math.min(OSC_BUF_SIZE >> 1,
-            Math.round(44100 / Math.max(20, currentFreq) * 2.5)));
+            Math.round(44100 / Math.max(16, currentFreq) * 2.5)));
         const M = OSC_BUF_SIZE;
 
         // Zero-crossing trigger: find first upward zero-crossing just before
         // the most recent displaySamples window, so the trace stays stable.
         const searchFrom = (oscWritePos - displaySamples - 256) & (M - 1);
         let triggerPos = searchFrom;
-        for (let i = 0; i < 512; i++) {
+        // Search one full period + margin so low octaves (16 Hz ≈ 2756 samples/cycle) trigger cleanly.
+        const searchWindow = Math.min(M - 1, Math.round(44100 / Math.max(16, currentFreq)) + 256);
+        for (let i = 0; i < searchWindow; i++) {
           if (oscRingBuf[(searchFrom + i) & (M - 1)] <= 0 &&
               oscRingBuf[(searchFrom + i + 1) & (M - 1)] > 0) {
             triggerPos = (searchFrom + i) & (M - 1);
@@ -772,7 +774,7 @@
         }
       } else {
         // ── Mathematical preview (before audio starts) ───────────────────
-        const cycles = 1 + 14 * (Math.log2(Math.max(20, currentFreq)) - Math.log2(20)) / (Math.log2(4000) - Math.log2(20));
+        const cycles = 1 + 14 * (Math.log2(Math.max(16, currentFreq)) - Math.log2(16)) / (Math.log2(4000) - Math.log2(16));
         const _cv = osc1Draw && osc1Draw.getValues();
         for (let x = 0; x <= W; x++) {
           const t = ((x / W) * cycles + scopeOffset) % 1;
