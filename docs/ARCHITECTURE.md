@@ -47,14 +47,16 @@ flowchart TD
 
     SUM["Stereo Sum\nΣ(filtered × pan_l)   Σ(filtered × pan_r)"]
     CLIP["Soft Clip\ntanh(sum × 0.3)"]
+    REVERB["Reverb — Freeverb\n8 comb + 4 allpass per channel\nwet · room · damp"]
     OUTL["get_left()"]
     OUTR["get_right()"]
     SPK["Speakers\nScriptProcessorNode — 256-sample stereo buffer"]
 
     PAN --> SUM
     SUM --> CLIP
-    CLIP --> OUTL
-    CLIP --> OUTR
+    CLIP --> REVERB
+    REVERB --> OUTL
+    REVERB --> OUTR
     OUTL --> SPK
     OUTR --> SPK
 
@@ -65,6 +67,7 @@ flowchart TD
     classDef flt    fill:#2a1a2e,stroke:#cba6f7,color:#cba6f7
     classDef pan    fill:#1a2a2e,stroke:#74c7ec,color:#74c7ec
     classDef lfo    fill:#2a1a3e,stroke:#cba6f7,color:#cba6f7
+    classDef reverb fill:#1a2e20,stroke:#a6e3a1,color:#a6e3a1
     classDef output fill:#181825,stroke:#a6e3a1,color:#a6e3a1
     classDef ctrl   fill:#181825,stroke:#45475a,color:#6c7086
     classDef io     fill:#1e1e2e,stroke:#45475a,color:#cdd6f4
@@ -76,6 +79,7 @@ flowchart TD
     class FLT flt
     class PAN pan
     class LFO,LFO2,ENV_SRC,MOD,SPREAD lfo
+    class REVERB reverb
     class OUTL,OUTR,SPK output
     class MIDI,FREQ ctrl
     class ALLOC io
@@ -97,5 +101,6 @@ flowchart TD
 | **Env (source)** | purple (dashed) | per-voice ADSR level (0–1) sampled once per tick; same value used for amplitude | `wasm_synth.rs` |
 | **Mod Matrix** | purple (dashed) | 4 slots: source × dest × amount (±1); Σ contributions per dest; recomputed every sample, no cleanup needed | `wasm_synth.rs` |
 | **Soft Clip** | — | `tanh(sum × 0.3)`; single voice passes almost linear, 8 voices saturate gracefully | `wasm_synth.rs` |
+| **Reverb** | green | Freeverb: 8 parallel comb filters + 4 series allpass per channel; stereo via 23-sample L/R offset; `wet` (0–1), `room` → feedback [0.70, 0.98], `damp` → LP rolloff [0, 0.40] | `reverb.rs` |
 
 For the theory behind each block see [WAVETABLE_THEORY.md](WAVETABLE_THEORY.md).

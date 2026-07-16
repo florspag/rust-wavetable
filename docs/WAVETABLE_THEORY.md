@@ -472,6 +472,93 @@ The `pan_l` / `pan_r` values are precomputed in `Voice` fields and only recalcul
 
 ---
 
+## Reverb
+
+The reverb is a **Freeverb**-style algorithmic reverberator (Jezar at Dreampoint, 1997): a Schroeder–Moorer network of parallel comb filters followed by series allpass filters, running at the audio sample rate on the mixed stereo bus.
+
+### Comb filter
+
+A feedback comb filter creates a repeating echo with exponential decay:
+
+```text
+y[n] = x[n] + feedback × y[n − L]
+```
+
+where `L` is the delay length in samples. A one-pole low-pass filter sits inside the feedback loop to model high-frequency absorption by room boundaries:
+
+```text
+store[n] = y[n − L] × damp₂ + store[n−1] × damp₁       (damp₁ + damp₂ = 1)
+y[n]     = x[n] + store[n] × feedback
+```
+
+`damp₁` is the LP coefficient: higher values roll off treble faster, producing a darker, more absorptive space. The transfer function of this damped comb is:
+
+```text
+H(z) = 1 / (1 − feedback × H_lp(z) × z^{−L})
+where H_lp(z) = damp₂ / (1 − damp₁ z^{−1})
+```
+
+The comb adds resonant peaks at multiples of `sr / L` Hz. Eight combs with different prime-related lengths are summed to spread these peaks across the spectrum and reduce metallic coloration.
+
+### Allpass filter
+
+The Schroeder allpass diffuses the signal in time without altering its spectrum (flat magnitude response, `|H| = 1` for all frequencies):
+
+```text
+y[n] = −x[n] + x[n − L] + 0.5 × y[n − L]
+```
+
+The all-pass property can be verified: writing in the z-domain gives `H(z) = (z^{−L} − 0.5) / (1 − 0.5 z^{−L})` — numerator and denominator are conjugate-reciprocal, so `|H(e^{jω})| = 1`. In the time domain it smears transients and randomizes inter-sample phase relationships, breaking up the flutter echoes left by the comb bank.
+
+### Network topology
+
+```text
+input = (in_L + in_R) × FIXED_GAIN     ← 0.015 — scales down before feedback builds up
+
+   ┌── comb_L[0] ──┐          ┌── comb_R[0] ──┐
+   ├── comb_L[1] ──┤          ├── comb_R[1] ──┤
+   │       ⋮       │  Σ→      │       ⋮       │  Σ→
+   └── comb_L[7] ──┘  sumL    └── comb_R[7] ──┘  sumR
+
+sumL → allpass_L[0] → allpass_L[1] → allpass_L[2] → allpass_L[3] → out_L
+sumR → allpass_R[0] → allpass_R[1] → allpass_R[2] → allpass_R[3] → out_R
+```
+
+All 8 combs receive the same mono input; their outputs are summed independently for L and R. The four allpass filters then run in series on each sum.
+
+### Delay lengths (tuned for 44 100 Hz)
+
+The lengths are chosen so that no two are integer multiples of each other — coincident resonances would collapse the echo density. The right channel adds a fixed 23-sample offset for stereo decorrelation.
+
+| Channel | Comb delays (samples) | Allpass delays |
+| ------- | --------------------- | -------------- |
+| **Left** | 1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617 | 556, 441, 341, 225 |
+| **Right** | +23 to each left length | +23 to each left length |
+
+### Parameter mapping
+
+| UI knob | Internal effect |
+| ------- | --------------- |
+| **Room** (0–1) | `feedback = room × 0.28 + 0.70` → range [0.70, 0.98]; higher = longer tail |
+| **Damp** (0–1) | `damp₁ = damp × 0.40` → [0, 0.40]; higher = darker, more absorptive |
+| **Wet** (0–1) | `output = dry × (1 − wet) + reverb_out × wet`; 0 = bypass |
+
+The `FIXED_GAIN = 0.015` is chosen so that with 8 comb filters summing into feedback ≈ 0.84 (Room = 0.5), the reverb output amplitude stays within ±1.
+
+### Wet / dry mix
+
+The reverb engine always runs (keeps the delay lines warm), and the mix is applied at output:
+
+```rust
+let dry = 1.0 - self.wet;
+(in_l * dry + out_l * self.wet,
+ in_r * dry + out_r * self.wet)
+```
+
+At `wet = 0` the signal passes through unchanged. As wet increases, the reverberated signal blends in while the direct signal fades proportionally, keeping the total perceived loudness roughly constant.
+
+---
+
 ## Signal Flow
 
 ```text
@@ -503,6 +590,11 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
   sum across all 8 voices → left_acc, right_acc
                         ↓
   tanh(left_acc × 0.3), tanh(right_acc × 0.3)   ← soft clip each channel
+                        ↓
+  Freeverb reverb (8 comb + 4 allpass per channel):
+    input = (raw_l + raw_r) × 0.015
+    out_L/R ← parallel comb bank → series allpass chain
+    output = raw × (1 − wet) + reverb_out × wet
                         ↓
   ScriptProcessorNode (2 channels): get_left() / get_right() → speakers
 ```

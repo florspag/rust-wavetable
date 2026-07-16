@@ -2,6 +2,7 @@ use wasm_bindgen::prelude::*;
 use crate::oscillator::Oscillator;
 use crate::adsr::Adsr;
 use crate::filter::Filter;
+use crate::reverb::Reverb;
 use std::f32::consts::FRAC_PI_4;
 
 const VOICES: usize = 8;
@@ -67,6 +68,7 @@ pub struct Synth {
     base_resonance: f32, // user-set filter resonance
     base_filter_type: u32,
     spread: f32,         // 0 = mono, 1 = full stereo spread across 8 voices
+    reverb: Reverb,
     last_left: f32,
     last_right: f32,
 }
@@ -125,6 +127,7 @@ impl Synth {
             base_resonance: 0.707,
             base_filter_type: 0,
             spread: 0.0,
+            reverb: Reverb::new(),
             last_left: 0.0,
             last_right: 0.0,
         };
@@ -301,8 +304,11 @@ impl Synth {
             right += filtered * v.pan_r;
         }
 
-        self.last_left  = (left  * 0.3).tanh();
-        self.last_right = (right * 0.3).tanh();
+        let raw_l = (left  * 0.3).tanh();
+        let raw_r = (right * 0.3).tanh();
+        let (out_l, out_r) = self.reverb.process(raw_l, raw_r);
+        self.last_left  = out_l;
+        self.last_right = out_r;
     }
 
     pub fn get_left(&self)  -> f32 { self.last_left  }
@@ -353,6 +359,13 @@ impl Synth {
     pub fn set_lfo2_rate(&mut self, freq: f32) {
         self.lfo2.change_freq(freq.clamp(0.01, 20.0), self.sample_rate);
     }
+
+    /// Reverb wet/dry mix (0 = dry only, 1 = full reverb).
+    pub fn set_reverb_wet(&mut self, v: f32)       { self.reverb.set_wet(v); }
+    /// Reverb room size (0 = short tail, 1 = long tail).
+    pub fn set_reverb_room(&mut self, v: f32)      { self.reverb.set_room_size(v); }
+    /// Reverb damping (0 = bright, 1 = dark).
+    pub fn set_reverb_damp(&mut self, v: f32)      { self.reverb.set_damp(v); }
 
     /// LFO 1 waveform (0 = Sine, 1 = Saw, 2 = Square, 3 = Triangle, 4 = Pulse).
     pub fn set_lfo_waveform(&mut self, idx: u32) {

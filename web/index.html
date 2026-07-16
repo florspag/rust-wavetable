@@ -277,6 +277,31 @@
 
     .knob-canvas-sm { width: 36px; height: 36px; }
 
+    /* Effects panel */
+    .fx-row {
+      display: flex;
+      gap: 2rem;
+      align-items: flex-start;
+    }
+
+    .fx-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .fx-label {
+      font-size: 0.65rem;
+      color: #6c7086;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .fx-knobs {
+      display: flex;
+      gap: 1.5rem;
+    }
+
     /* Filter panel */
     .flt-row {
       display: flex;
@@ -658,6 +683,32 @@
         </div>
       </div>
       <canvas id="flt-scope"></canvas>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Effects</div>
+    <div class="fx-row">
+      <div class="fx-section">
+        <span class="fx-label">Reverb</span>
+        <div class="fx-knobs">
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="reverb-wet-knob"></canvas>
+            <span class="knob-label">Wet</span>
+            <span class="knob-val" id="reverb-wet-val">0%</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="reverb-room-knob"></canvas>
+            <span class="knob-label">Room</span>
+            <span class="knob-val" id="reverb-room-val">50%</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="reverb-damp-knob"></canvas>
+            <span class="knob-label">Damp</span>
+            <span class="knob-val" id="reverb-damp-val">50%</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1621,6 +1672,31 @@
 
     drawFilterScope();
     new ResizeObserver(drawFilterScope).observe(fltScopeCanvas);
+
+    // ── Effects ───────────────────────────────────────────────────────────
+    const reverbWetKnob = new Knob(document.getElementById('reverb-wet-knob'), {
+      min: 0, max: 1, value: 0, color: '#a6e3a1',
+      onChange: v => {
+        document.getElementById('reverb-wet-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_reverb_wet(v);
+      },
+    });
+
+    const reverbRoomKnob = new Knob(document.getElementById('reverb-room-knob'), {
+      min: 0, max: 1, value: 0.5, color: '#a6e3a1',
+      onChange: v => {
+        document.getElementById('reverb-room-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_reverb_room(v);
+      },
+    });
+
+    const reverbDampKnob = new Knob(document.getElementById('reverb-damp-knob'), {
+      min: 0, max: 1, value: 0.5, color: '#a6e3a1',
+      onChange: v => {
+        document.getElementById('reverb-damp-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_reverb_damp(v);
+      },
+    });
 
     const detuneKnob = new Knob(document.getElementById('osc2-detune-knob'), {
       min: 0, max: 100, value: 0, color: '#89b4fa',
