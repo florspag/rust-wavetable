@@ -345,13 +345,13 @@ impl Synth {
     }
 
     /// LFO 1 rate in Hz (clamped to 0.01–20).
-    pub fn set_lfo_rate(&mut self, hz: f32) {
-        self.lfo.change_freq(hz.clamp(0.01, 20.0), self.sample_rate);
+    pub fn set_lfo_rate(&mut self, freq: f32) {
+        self.lfo.change_freq(freq.clamp(0.01, 20.0), self.sample_rate);
     }
 
     /// LFO 2 rate in Hz (clamped to 0.01–20).
-    pub fn set_lfo2_rate(&mut self, hz: f32) {
-        self.lfo2.change_freq(hz.clamp(0.01, 20.0), self.sample_rate);
+    pub fn set_lfo2_rate(&mut self, freq: f32) {
+        self.lfo2.change_freq(freq.clamp(0.01, 20.0), self.sample_rate);
     }
 
     /// LFO 1 waveform (0 = Sine, 1 = Saw, 2 = Square, 3 = Triangle, 4 = Pulse).
@@ -381,18 +381,18 @@ impl Synth {
         }
     }
 
-    pub fn set_filter_cutoff(&mut self, hz: f32) {
-        self.base_cutoff = hz;
-        for v in self.voices.iter_mut() { v.filter.set_cutoff(hz); }
+    pub fn set_filter_cutoff(&mut self, freq: f32) {
+        self.base_cutoff = freq;
+        for v in self.voices.iter_mut() { v.filter.set_cutoff(freq); }
     }
 
-    pub fn set_filter_resonance(&mut self, q: f32) {
-        self.base_resonance = q;
-        for v in self.voices.iter_mut() { v.filter.set_resonance(q); }
+    pub fn set_filter_resonance(&mut self, q_factor: f32) {
+        self.base_resonance = q_factor;
+        for v in self.voices.iter_mut() { v.filter.set_resonance(q_factor); }
     }
 
-    pub fn set_filter_type(&mut self, t: u32) {
-        self.base_filter_type = t;
-        for v in self.voices.iter_mut() { v.filter.set_type(t); }
+    pub fn set_filter_type(&mut self, filter_type: u32) {
+        self.base_filter_type = filter_type;
+        for v in self.voices.iter_mut() { v.filter.set_type(filter_type); }
     }
 }

@@ -63,6 +63,30 @@
       margin-bottom: 1rem;
     }
 
+    .panel-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    .panel-title-row .panel-title { margin-bottom: 0; }
+
+    .latch-btn {
+      font-size: 0.65rem;
+      font-family: inherit;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 0.2rem 0.6rem;
+      background: #1e1e2e;
+      border: 1px solid #313244;
+      border-radius: 4px;
+      color: #585b70;
+      cursor: pointer;
+      transition: background 0.1s, border-color 0.1s, color 0.1s;
+    }
+    .latch-btn:hover { border-color: #45475a; color: #cdd6f4; }
+    .latch-btn.on { background: #2e1a1a; border-color: #f38ba8; color: #f38ba8; box-shadow: 0 0 8px #f38ba844; }
+
     /* Waveform + oscilloscope row */
     .wf-osc {
       display: flex;
@@ -638,7 +662,10 @@
   </div>
 
   <div class="panel">
-    <div class="panel-title">Keyboard — C0 to C7</div>
+    <div class="panel-title-row">
+      <span class="panel-title">Keyboard — C0 to C7</span>
+      <button class="latch-btn" id="latch-btn">Latch</button>
+    </div>
     <div class="piano-wrap">
       <div class="piano" id="piano"></div>
     </div>
@@ -906,13 +933,25 @@
     }
 
     // ── Key interaction ─────────────────────────────────────────────────
-    const activeNotes = new Set();        // all currently held MIDI notes
+    const activeNotes = new Set();        // all currently sounding MIDI notes
     const pointerToNote = new Map();      // pointerId → midi (multi-touch)
+    let latchMode = false;
+    const latchedNotes = new Set();       // notes kept alive by latch
 
     function noteOn(midi) {
       startAudio().then(() => {
         if (!synth) return;
+        // In latch mode, re-pressing a latched note toggles it off
+        if (latchMode && activeNotes.has(midi)) {
+          activeNotes.delete(midi);
+          latchedNotes.delete(midi);
+          synth.note_off(midiFreq(midi));
+          if (activeNotes.size === 0) { isPlaying = false; noteDisplay.textContent = ''; }
+          document.querySelectorAll(`[data-midi="${midi}"]`).forEach(el => el.classList.remove('active'));
+          return;
+        }
         activeNotes.add(midi);
+        if (latchMode) latchedNotes.add(midi);
         const freq = midiFreq(midi);
         synth.note_on(freq);
         isPlaying = true;
@@ -924,6 +963,7 @@
     }
 
     function noteOff(midi) {
+      if (latchMode && latchedNotes.has(midi)) return; // latch holds this note
       if (!activeNotes.has(midi)) return;
       activeNotes.delete(midi);
       if (synth) synth.note_off(midiFreq(midi));
@@ -961,6 +1001,22 @@
       const midi = KEY_MAP[e.key.toLowerCase()];
       if (midi === undefined) return;
       noteOff(midi);
+    });
+
+    // Latch toggle
+    document.getElementById('latch-btn').addEventListener('click', () => {
+      latchMode = !latchMode;
+      document.getElementById('latch-btn').classList.toggle('on', latchMode);
+      if (!latchMode) {
+        // Release all latched notes
+        latchedNotes.forEach(midi => {
+          activeNotes.delete(midi);
+          if (synth) synth.note_off(midiFreq(midi));
+          document.querySelectorAll(`[data-midi="${midi}"]`).forEach(el => el.classList.remove('active'));
+        });
+        latchedNotes.clear();
+        if (activeNotes.size === 0) { isPlaying = false; noteDisplay.textContent = ''; }
+      }
     });
 
     // ── Custom wavetable draw ────────────────────────────────────────────

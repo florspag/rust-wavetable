@@ -73,7 +73,7 @@ Open [http://localhost:8080](http://localhost:8080).
 | **Modulation** | Two independent LFOs (LFO 1 purple, LFO 2 cyan), each with a **Rate** knob (0.01–20 Hz, log scale) and a **waveform row** (sin / saw / sqr / tri / pls); and a **4-slot modulation matrix** where each slot routes a source (LFO 1, LFO 2, or per-voice Env) to a destination (Pitch ±2 st, Cutoff ±3 oct, Resonance ±10 Q, Mix); amount knob is bipolar (−100%…+100%); multiple slots can target the same destination and sum |
 | **ADSR Envelope** | Interactive canvas — drag the green handle (X = attack time), yellow handle (X = decay time, Y = sustain level), red handle (X = release time) |
 | **Filter** | Per-voice biquad filter with a cycling type selector (LP → HP → BP → LP), two rotary knobs (Cutoff log 20 Hz–20 kHz, Resonance 0.1–20), and a frequency-response display; each of the 8 voices has an independent filter so stolen voices cannot bleed mid-sweep state into new notes |
-| **Keyboard** | 7-octave piano (C0–C7); click/touch keys or use `A W S E D F T G Y H U J K` for C4–C5; supports multi-touch and up to 8 simultaneous notes |
+| **Keyboard** | 7-octave piano (C0–C7); click/touch keys or use `A W S E D F T G Y H U J K` for C4–C5; supports multi-touch and up to 8 simultaneous notes; **Latch** button holds notes after key release — re-press a latched key to unlatch it, toggle Latch off to silence all held notes at once |
 | **Frequency** | Logarithmic slider (16–4000 Hz) — controls oscillator pitch independently of the piano; shows Hz and nearest note name |
 
 ---
