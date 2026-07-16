@@ -297,6 +297,12 @@
       letter-spacing: 0.1em;
     }
 
+    .fx-divider {
+      width: 1px;
+      background: #313244;
+      align-self: stretch;
+    }
+
     .fx-knobs {
       display: flex;
       gap: 1.5rem;
@@ -706,6 +712,32 @@
             <canvas class="knob-canvas" id="reverb-damp-knob"></canvas>
             <span class="knob-label">Damp</span>
             <span class="knob-val" id="reverb-damp-val">50%</span>
+          </div>
+        </div>
+      </div>
+      <div class="fx-divider"></div>
+      <div class="fx-section">
+        <span class="fx-label">Flanger</span>
+        <div class="fx-knobs">
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="flanger-wet-knob"></canvas>
+            <span class="knob-label">Wet</span>
+            <span class="knob-val" id="flanger-wet-val">0%</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="flanger-rate-knob"></canvas>
+            <span class="knob-label">Rate</span>
+            <span class="knob-val" id="flanger-rate-val">0.30 Hz</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="flanger-depth-knob"></canvas>
+            <span class="knob-label">Depth</span>
+            <span class="knob-val" id="flanger-depth-val">50%</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="flanger-fbk-knob"></canvas>
+            <span class="knob-label">Feedback</span>
+            <span class="knob-val" id="flanger-fbk-val">50%</span>
           </div>
         </div>
       </div>
@@ -1695,6 +1727,38 @@
       onChange: v => {
         document.getElementById('reverb-damp-val').textContent = Math.round(v * 100) + '%';
         if (synth) synth.set_reverb_damp(v);
+      },
+    });
+
+    const flangerWetKnob = new Knob(document.getElementById('flanger-wet-knob'), {
+      min: 0, max: 1, value: 0, color: '#cba6f7',
+      onChange: v => {
+        document.getElementById('flanger-wet-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_flanger_wet(v);
+      },
+    });
+
+    const flangerRateKnob = new Knob(document.getElementById('flanger-rate-knob'), {
+      min: 0.05, max: 8, value: 0.3, log: true, color: '#cba6f7',
+      onChange: v => {
+        document.getElementById('flanger-rate-val').textContent = v.toFixed(2) + ' Hz';
+        if (synth) synth.set_flanger_rate(v);
+      },
+    });
+
+    const flangerDepthKnob = new Knob(document.getElementById('flanger-depth-knob'), {
+      min: 0, max: 1, value: 0.5, color: '#cba6f7',
+      onChange: v => {
+        document.getElementById('flanger-depth-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_flanger_depth(v);
+      },
+    });
+
+    const flangerFbkKnob = new Knob(document.getElementById('flanger-fbk-knob'), {
+      min: 0, max: 0.9, value: 0.5, color: '#cba6f7',
+      onChange: v => {
+        document.getElementById('flanger-fbk-val').textContent = Math.round(v / 0.9 * 100) + '%';
+        if (synth) synth.set_flanger_feedback(v);
       },
     });
 

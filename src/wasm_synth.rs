@@ -3,6 +3,7 @@ use crate::oscillator::Oscillator;
 use crate::adsr::Adsr;
 use crate::filter::Filter;
 use crate::reverb::Reverb;
+use crate::flanger::Flanger;
 use std::f32::consts::FRAC_PI_4;
 
 const VOICES: usize = 8;
@@ -69,6 +70,7 @@ pub struct Synth {
     base_filter_type: u32,
     spread: f32,         // 0 = mono, 1 = full stereo spread across 8 voices
     reverb: Reverb,
+    flanger: Flanger,
     last_left: f32,
     last_right: f32,
 }
@@ -128,6 +130,7 @@ impl Synth {
             base_filter_type: 0,
             spread: 0.0,
             reverb: Reverb::new(),
+            flanger: Flanger::new(sample_rate),
             last_left: 0.0,
             last_right: 0.0,
         };
@@ -306,7 +309,8 @@ impl Synth {
 
         let raw_l = (left  * 0.3).tanh();
         let raw_r = (right * 0.3).tanh();
-        let (out_l, out_r) = self.reverb.process(raw_l, raw_r);
+        let (fl_l, fl_r) = self.flanger.process(raw_l, raw_r);
+        let (out_l, out_r) = self.reverb.process(fl_l, fl_r);
         self.last_left  = out_l;
         self.last_right = out_r;
     }
@@ -376,6 +380,11 @@ impl Synth {
     pub fn set_lfo2_waveform(&mut self, idx: u32) {
         self.lfo2.set_waveform(idx as usize);
     }
+
+    pub fn set_flanger_wet(&mut self, v: f32)      { self.flanger.set_wet(v); }
+    pub fn set_flanger_rate(&mut self, hz: f32)    { self.flanger.set_rate(hz, self.sample_rate); }
+    pub fn set_flanger_depth(&mut self, v: f32)    { self.flanger.set_depth(v); }
+    pub fn set_flanger_feedback(&mut self, v: f32) { self.flanger.set_feedback(v); }
 
     /// Configure one modulation matrix slot.
     ///

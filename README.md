@@ -73,7 +73,7 @@ Open [http://localhost:8080](http://localhost:8080).
 | **Modulation** | Two independent LFOs (LFO 1 purple, LFO 2 cyan), each with a **Rate** knob (0.01–20 Hz, log scale) and a **waveform row** (sin / saw / sqr / tri / pls); and a **4-slot modulation matrix** where each slot routes a source (LFO 1, LFO 2, or per-voice Env) to a destination (Pitch ±2 st, Cutoff ±3 oct, Resonance ±10 Q, Mix); amount knob is bipolar (−100%…+100%); multiple slots can target the same destination and sum |
 | **ADSR Envelope** | Interactive canvas — drag the green handle (X = attack time), yellow handle (X = decay time, Y = sustain level), red handle (X = release time) |
 | **Filter** | Per-voice biquad filter with a cycling type selector (LP → HP → BP → LP), two rotary knobs (Cutoff log 20 Hz–20 kHz, Resonance 0.1–20), and a frequency-response display; each of the 8 voices has an independent filter so stolen voices cannot bleed mid-sweep state into new notes |
-| **Effects** | Freeverb algorithmic reverb on the stereo bus — **Wet** (0–100%) blends the reverb signal, **Room** (0–100%) controls tail length via comb-filter feedback, **Damp** (0–100%) rolls off high frequencies inside the feedback loop for brighter or darker spaces |
+| **Effects** | Two effects on the stereo bus, in series: **Flanger** — modulated feedback comb filter with **Wet**, **Rate** (0.05–8 Hz, log), **Depth**, and **Feedback** knobs; right-channel LFO runs 90° ahead for a wide stereo sweep; **Reverb** (Freeverb) — **Wet**, **Room** (tail length), and **Damp** (HF absorption) |
 | **Keyboard** | 7-octave piano (C0–C7); click/touch keys or use `A W S E D F T G Y H U J K` for C4–C5; supports multi-touch and up to 8 simultaneous notes; **Latch** button holds notes after key release — re-press a latched key to unlatch it, toggle Latch off to silence all held notes at once |
 | **Frequency** | Logarithmic slider (16–4000 Hz) — controls oscillator pitch independently of the piano; shows Hz and nearest note name |
 
@@ -89,6 +89,7 @@ src/
   oscillator.rs    # Phase accumulator + 8-tap Blackman-sinc interpolation (LUT + row lerp); selects mip level on set_freq
   adsr.rs          # ADSR envelope with live parameter setters
   filter.rs        # Biquad filter (LP / HP / BP, Audio EQ Cookbook)
+  flanger.rs       # Modulated feedback comb filter — 512-sample circular buffer, sinusoidal LFO, stereo 90° offset (WASM only)
   reverb.rs        # Freeverb reverb — 8 comb + 4 allpass per channel, stereo (WASM only)
   keys.rs          # QWERTY → MIDI mapping (terminal only)
   wasm_synth.rs    # wasm-bindgen Synth wrapper — 8-voice polyphony, 2 osc + per-voice filter + reverb + stereo panning per voice, LFO, voice stealing (WASM only)

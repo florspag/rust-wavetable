@@ -559,6 +559,107 @@ At `wet = 0` the signal passes through unchanged. As wet increases, the reverber
 
 ---
 
+## Flanger
+
+A flanger is a **modulated feedback comb filter**: the input is mixed with a slightly delayed, slightly modified copy of itself. As the delay length sweeps in time, the comb-filter notches sweep across the spectrum, producing the characteristic jet-plane whoosh.
+
+### The delay line
+
+A circular buffer of length `BUF_SIZE = 512` samples holds the signal history. On each sample the write pointer advances by one; a delayed read at position `write_ptr − d` gives the signal from `d` samples ago. When `d` is not an integer, **linear interpolation** between the two neighbouring samples recovers the fractional-delay value:
+
+```text
+i₀ = (write_ptr − ⌊d⌋)     mod BUF_SIZE   ← sample just past the target delay
+i₁ = (write_ptr − ⌊d⌋ − 1) mod BUF_SIZE   ← one sample further back
+frac = d − ⌊d⌋
+
+tap = buf[i₀] × (1 − frac) + buf[i₁] × frac
+```
+
+### Feedback and write
+
+Rather than writing the dry input directly, the signal stored in the buffer includes a portion of the already-delayed signal fed back into itself:
+
+```text
+buf[n] = x[n] + feedback × tap[n]
+y[n]   = dry × x[n] + wet × tap[n]
+```
+
+where `dry = 1 − wet`.
+
+### Transfer function (constant delay)
+
+For a fixed delay of `D` samples, setting `z = e^{jω}` (the unit circle), the buffer signal `B(z)` satisfies:
+
+```text
+B(z) = X(z) + feedback × z^{−D} × B(z)
+     ⟹  B(z) = X(z) / (1 − feedback × z^{−D})
+```
+
+The delayed tap at the output is `z^{−D} × B(z)`, so the overall transfer function is:
+
+```text
+H(z) = (1 − wet) + wet × z^{−D} / (1 − feedback × z^{−D})
+     = [ (1 − wet) × (1 − feedback × z^{−D}) + wet × z^{−D} ]
+       / (1 − feedback × z^{−D})
+     = (1 − wet) + [wet − (1 − wet) × feedback] × z^{−D}
+       / (1 − feedback × z^{−D})
+```
+
+### Comb pattern
+
+With `feedback = 0` and `wet = 0.5`, the magnitude squared reduces to:
+
+```text
+|H(e^{jω})|² = ½ (1 + cos(ωD))
+```
+
+Notches (zeros) appear wherever `cos(ωD) = −1`, i.e. at:
+
+```text
+f_k = (2k + 1) × sr / (2D)    k = 0, 1, 2, …
+```
+
+Peaks appear at `f_k = k × sr / D`. The result is a **comb filter** whose teeth are spaced `sr / D` Hz apart. As the delay `D` sweeps, all teeth shift simultaneously — frequencies are swallowed and released in rapid succession.
+
+For `D` sweeping between the implementation constants `CENTER ± depth × MAX_DEPTH`:
+
+```text
+CENTER          = 110 samples ≈ 2.5 ms
+MAX_DEPTH       = 110 samples ≈ 2.5 ms
+delay range     = [CENTER − depth × MAX_DEPTH,  CENTER + depth × MAX_DEPTH]
+first notch     = sr / (2D) ∈ [~100 Hz, ∞)   (depth = 1, D at maximum)
+```
+
+Feedback `g > 0` narrows the notches and adds resonant peaks, intensifying the effect. The poles of `H(z)` are at `z = g^{1/D} e^{j 2πk/D}`, which stay inside the unit circle as long as `|g| < 1` — stability is guaranteed by clamping `feedback` to [0, 0.9].
+
+### LFO sweep
+
+The delay length is driven by a sinusoidal LFO:
+
+```text
+d(n) = CENTER + depth × MAX_DEPTH × sin(2π × rate × n / sr)
+```
+
+The right-channel LFO runs **90° ahead** of the left:
+
+```text
+d_R(n) = CENTER + depth × MAX_DEPTH × sin(2π × rate × n / sr + π/2)
+        = CENTER + depth × MAX_DEPTH × cos(2π × rate × n / sr)
+```
+
+This quarter-period phase offset decorrelates the comb spectra of L and R: when the left channel has a notch at a given frequency the right channel is mid-sweep past it, producing a wide stereo image that rotates with the LFO.
+
+### Flanger parameter mapping
+
+| UI knob | Implementation |
+| ------- | -------------- |
+| **Wet** (0–1) | `dry = 1 − wet`; 0 = bypass, 1 = all flanger |
+| **Rate** (0.05–8 Hz) | LFO frequency; logarithmic knob; sweep speed |
+| **Depth** (0–1) | Scales `MAX_DEPTH_SAMPLES = 110`; 0 = static notch at CENTER, 1 = full ±2.5 ms sweep |
+| **Feedback** (0–0.9) | Recirculation gain; higher = narrower, more resonant notch teeth |
+
+---
+
 ## Signal Flow
 
 ```text
@@ -591,10 +692,17 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
                         ↓
   tanh(left_acc × 0.3), tanh(right_acc × 0.3)   ← soft clip each channel
                         ↓
+  Flanger (modulated feedback comb, stereo):
+    d(n) = CENTER + depth × MAX_DEPTH × sin(2π·rate·n/sr)
+    d_R(n) = same but cos (90° ahead) ← stereo decorrelation
+    tap = read_tap(buf, write_ptr, d(n))  ← linear interpolation
+    buf[n] = raw[n] + feedback × tap
+    output = (1−wet) × raw[n] + wet × tap
+                        ↓
   Freeverb reverb (8 comb + 4 allpass per channel):
-    input = (raw_l + raw_r) × 0.015
+    input = (fl_l + fl_r) × 0.015
     out_L/R ← parallel comb bank → series allpass chain
-    output = raw × (1 − wet) + reverb_out × wet
+    output = fl × (1 − wet) + reverb_out × wet
                         ↓
   ScriptProcessorNode (2 channels): get_left() / get_right() → speakers
 ```
