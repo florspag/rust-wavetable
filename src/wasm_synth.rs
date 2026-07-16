@@ -354,6 +354,16 @@ impl Synth {
         self.lfo2.change_freq(hz.clamp(0.01, 20.0), self.sample_rate);
     }
 
+    /// LFO 1 waveform (0 = Sine, 1 = Saw, 2 = Square, 3 = Triangle, 4 = Pulse).
+    pub fn set_lfo_waveform(&mut self, idx: u32) {
+        self.lfo.set_waveform(idx as usize);
+    }
+
+    /// LFO 2 waveform (0 = Sine, 1 = Saw, 2 = Square, 3 = Triangle, 4 = Pulse).
+    pub fn set_lfo2_waveform(&mut self, idx: u32) {
+        self.lfo2.set_waveform(idx as usize);
+    }
+
     /// Configure one modulation matrix slot.
     ///
     /// - `slot`   — 0–3

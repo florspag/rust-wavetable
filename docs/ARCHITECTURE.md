@@ -29,8 +29,8 @@ flowchart TD
 
     ALLOC --> VOICE
 
-    LFO["LFO 1\nOscillator @ 0.01–20 Hz\nsinusoidal · global · default 1 Hz"]
-    LFO2["LFO 2\nOscillator @ 0.01–20 Hz\nsinusoidal · global · default 0.25 Hz"]
+    LFO["LFO 1\nOscillator @ 0.01–20 Hz\nwaveform selectable · global · default 1 Hz sine"]
+    LFO2["LFO 2\nOscillator @ 0.01–20 Hz\nwaveform selectable · global · default 0.25 Hz sine"]
     ENV_SRC["Env (per-voice)\ncurrent ADSR level\n0 → 1 (unipolar)"]
     MOD["Mod Matrix — 4 slots\nsource × dest × amount (±1)\nΣ contributions per dest"]
     SPREAD["Spread knob\n0 = mono\n1 = voice 0 hard-left, voice 7 hard-right"]
@@ -92,8 +92,8 @@ flowchart TD
 | **ADSR** | yellow | attack / decay / sustain / release; rate = 1/(time × sr) | `adsr.rs` |
 | **Biquad Filter** | purple | LP / HP / BP; `base_cutoff`, `base_resonance`; Direct Form II T | `filter.rs` |
 | **Stereo Pan** | cyan | equal-power cos/sin; `spread` distributes 8 voices −1 → +1 | `wasm_synth.rs` |
-| **LFO 1** | purple (dashed) | reuses `Oscillator` at very low `phase_inc`; sine; global; default 1 Hz | `wasm_synth.rs` |
-| **LFO 2** | purple (dashed) | independent second `Oscillator`; sine; global; default 0.25 Hz — use alongside LFO 1 for layered motion | `wasm_synth.rs` |
+| **LFO 1** | purple (dashed) | reuses `Oscillator` at very low `phase_inc`; waveform selectable (sin/saw/sqr/tri/pls) via `set_lfo_waveform`; global; default 1 Hz sine | `wasm_synth.rs` |
+| **LFO 2** | purple (dashed) | independent second `Oscillator`; same selectable waveforms via `set_lfo2_waveform`; global; default 0.25 Hz sine — use alongside LFO 1 for layered motion with distinct shapes | `wasm_synth.rs` |
 | **Env (source)** | purple (dashed) | per-voice ADSR level (0–1) sampled once per tick; same value used for amplitude | `wasm_synth.rs` |
 | **Mod Matrix** | purple (dashed) | 4 slots: source × dest × amount (±1); Σ contributions per dest; recomputed every sample, no cleanup needed | `wasm_synth.rs` |
 | **Soft Clip** | — | `tanh(sum × 0.3)`; single voice passes almost linear, 8 voices saturate gracefully | `wasm_synth.rs` |

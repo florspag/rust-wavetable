@@ -172,6 +172,36 @@
       gap: 2rem;
     }
 
+    .lfo-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+      flex-shrink: 0;
+    }
+
+    .lfo-wf-btns {
+      display: flex;
+      gap: 3px;
+    }
+
+    .lfo-wf-btn {
+      width: 30px;
+      padding: 0.15rem 0;
+      background: #1e1e2e;
+      border: 1px solid #313244;
+      border-radius: 3px;
+      color: #585b70;
+      font-family: inherit;
+      font-size: 0.6rem;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.1s, border-color 0.1s, color 0.1s;
+    }
+    .lfo-wf-btn:hover { background: #313244; color: #cdd6f4; }
+    #lfo1-wf .lfo-wf-btn.active { background: #2a1a3e; border-color: #cba6f7; color: #cba6f7; }
+    #lfo2-wf .lfo-wf-btn.active { background: #1a2a2e; border-color: #74c7ec; color: #74c7ec; }
+
     .mod-matrix-section { flex: 1; min-width: 0; }
 
     .mod-matrix-head {
@@ -532,15 +562,33 @@
   <div class="panel">
     <div class="panel-title">Modulation</div>
     <div class="mod-top-row">
-      <div class="knob-wrap">
-        <canvas class="knob-canvas" id="lfo-rate-knob"></canvas>
-        <span class="knob-label">LFO Rate</span>
-        <span class="knob-val" id="lfo-rate-val">1.00 Hz</span>
+      <div class="lfo-section">
+        <div class="knob-wrap">
+          <canvas class="knob-canvas" id="lfo-rate-knob"></canvas>
+          <span class="knob-label">LFO 1 Rate</span>
+          <span class="knob-val" id="lfo-rate-val">1.00 Hz</span>
+        </div>
+        <div class="lfo-wf-btns" id="lfo1-wf">
+          <button class="lfo-wf-btn active" data-idx="0">sin</button>
+          <button class="lfo-wf-btn"        data-idx="1">saw</button>
+          <button class="lfo-wf-btn"        data-idx="2">sqr</button>
+          <button class="lfo-wf-btn"        data-idx="3">tri</button>
+          <button class="lfo-wf-btn"        data-idx="4">pls</button>
+        </div>
       </div>
-      <div class="knob-wrap">
-        <canvas class="knob-canvas" id="lfo2-rate-knob"></canvas>
-        <span class="knob-label">LFO 2 Rate</span>
-        <span class="knob-val" id="lfo2-rate-val">0.50 Hz</span>
+      <div class="lfo-section">
+        <div class="knob-wrap">
+          <canvas class="knob-canvas" id="lfo2-rate-knob"></canvas>
+          <span class="knob-label">LFO 2 Rate</span>
+          <span class="knob-val" id="lfo2-rate-val">0.50 Hz</span>
+        </div>
+        <div class="lfo-wf-btns" id="lfo2-wf">
+          <button class="lfo-wf-btn active" data-idx="0">sin</button>
+          <button class="lfo-wf-btn"        data-idx="1">saw</button>
+          <button class="lfo-wf-btn"        data-idx="2">sqr</button>
+          <button class="lfo-wf-btn"        data-idx="3">tri</button>
+          <button class="lfo-wf-btn"        data-idx="4">pls</button>
+        </div>
       </div>
       <div class="mod-matrix-section">
         <div class="mod-matrix-head">
@@ -847,10 +895,14 @@
         statusEl.textContent = 'Audio error — click a key to retry';
         return;
       }
-      // Non-critical: push current knob positions to the new synth.
+      // Non-critical: push current knob/button positions to the new synth.
       // Audio is already running, so these throwing cannot break playback.
       synth.set_lfo_rate(lfoRateKnob.value);
       synth.set_lfo2_rate(lfo2RateKnob.value);
+      const lfo1Wf = document.querySelector('#lfo1-wf .lfo-wf-btn.active');
+      const lfo2Wf = document.querySelector('#lfo2-wf .lfo-wf-btn.active');
+      if (lfo1Wf) synth.set_lfo_waveform(+lfo1Wf.dataset.idx);
+      if (lfo2Wf) synth.set_lfo2_waveform(+lfo2Wf.dataset.idx);
     }
 
     // ── Key interaction ─────────────────────────────────────────────────
@@ -1577,6 +1629,22 @@
       },
     });
     document.getElementById('lfo2-rate-val').textContent = fmtRate(lfo2RateKnob.value);
+
+    document.getElementById('lfo1-wf').addEventListener('click', e => {
+      const btn = e.target.closest('.lfo-wf-btn');
+      if (!btn) return;
+      document.querySelectorAll('#lfo1-wf .lfo-wf-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (synth) synth.set_lfo_waveform(+btn.dataset.idx);
+    });
+
+    document.getElementById('lfo2-wf').addEventListener('click', e => {
+      const btn = e.target.closest('.lfo-wf-btn');
+      if (!btn) return;
+      document.querySelectorAll('#lfo2-wf .lfo-wf-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (synth) synth.set_lfo2_waveform(+btn.dataset.idx);
+    });
 
     // Modulation matrix — 4 slots, each: source × dest × amount
     const MOD_SOURCES = ['Off', 'LFO', 'Env', 'LFO2'];

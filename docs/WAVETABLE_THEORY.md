@@ -331,11 +331,11 @@ The synth has a **4-slot modulation matrix**. Each slot independently connects a
 
 | Source | Signal range | Description |
 | ------ | ------------ | ----------- |
-| **LFO 1** | −1 to +1 (bipolar) | Sine `Oscillator` running at 0.01–20 Hz, global (shared across all voices); default 1 Hz |
-| **LFO 2** | −1 to +1 (bipolar) | Independent second sine `Oscillator` at 0.01–20 Hz; default 0.25 Hz — allows two modulation rates simultaneously |
+| **LFO 1** | −1 to +1 (bipolar) | `Oscillator` running at 0.01–20 Hz, global (shared across all voices); waveform selectable (sin / saw / sqr / tri / pls); default 1 Hz sine |
+| **LFO 2** | −1 to +1 (bipolar) | Independent second `Oscillator` at 0.01–20 Hz; same selectable waveforms; default 0.25 Hz sine — allows two independent modulation shapes and rates simultaneously |
 | **Env** | 0 to +1 (unipolar) | The current ADSR level of each individual voice — different per voice |
 
-Both LFOs reuse the same `Oscillator` struct used for audio, running at the audio sample rate with a very low `phase_inc`. Sine (waveform 0) is used for the smoothest modulation shape. Having two independent LFOs lets you, for example, apply fast vibrato (LFO 1 at 5 Hz on Pitch) and a slow filter sweep (LFO 2 at 0.1 Hz on Cutoff) simultaneously.
+Both LFOs reuse the same `Oscillator` struct used for audio, running at the audio sample rate with a very low `phase_inc`. The waveform shape is selected independently for each LFO via `set_lfo_waveform` / `set_lfo2_waveform`, which delegate to the standard `Oscillator::set_waveform` — giving access to any of the five non-custom waveforms (0 = sine for smooth modulation, 1 = sawtooth for rising ramps, 2 = square for hard step effects, 3 = triangle for linear sweep, 4 = pulse for asymmetric gates). Having two independent LFOs with different shapes lets you, for example, combine a sine vibrato on Pitch (LFO 1) with a square hard-gating on Cutoff (LFO 2) simultaneously.
 
 The Env source makes modulation inherently polyphonic: a voice in its attack stage sweeps differently from one mid-sustain, so notes naturally feel independent.
 
@@ -513,4 +513,4 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
 
 1. **Waveform morphing** — crossfade between two tables by blending `table[a]` and `table[b]` samples for smooth timbral evolution; morph position could be a mod matrix destination.
 2. **Per-voice unison stereo spread** — give each unison copy its own pan position within the voice rather than mixing to mono first; the eight copies would fan across the stereo field independently of the voice-level Spread knob.
-3. **LFO waveform selector** — expose the `set_waveform` call on the LFO oscillators so LFOs can run as triangle, saw, or square shapes (useful for hard pitch-step effects or sawtooth filter sweeps).
+3. **LFO sync to note** — reset LFO phase on each `note_on` so every note begins at the same modulation point; useful for attack-synced vibrato or rhythmically consistent filter sweeps.
