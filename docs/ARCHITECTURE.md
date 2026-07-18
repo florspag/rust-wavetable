@@ -49,6 +49,7 @@ flowchart TD
     CLIP["Soft Clip\ntanh(sum × 0.3)"]
     FLANGER["Flanger\nd(n) = CENTER + depth·MAX·sin(2π·rate·n/sr)\nR channel: cos (90° ahead) · feedback · wet"]
     REVERB["Reverb — Freeverb\n8 comb + 4 allpass per channel\nwet · room · damp"]
+    BLACKHOLE["Blackhole — Eventide-inspired\n8 comb (gravity 0–1, Size 1×–4×) + 4 mod-allpass per channel\nwet · gravity · size · damp · mod · predelay"]
     OUTL["get_left()"]
     OUTR["get_right()"]
     SPK["Speakers\nScriptProcessorNode — 256-sample stereo buffer"]
@@ -57,23 +58,25 @@ flowchart TD
     SUM --> CLIP
     CLIP --> FLANGER
     FLANGER --> REVERB
-    REVERB --> OUTL
-    REVERB --> OUTR
+    REVERB --> BLACKHOLE
+    BLACKHOLE --> OUTL
+    BLACKHOLE --> OUTR
     OUTL --> SPK
     OUTR --> SPK
 
-    classDef osc1    fill:#1e3a5f,stroke:#89b4fa,color:#89b4fa
-    classDef osc2    fill:#1a2e1a,stroke:#a6e3a1,color:#a6e3a1
-    classDef blend   fill:#1e1e2e,stroke:#45475a,color:#cdd6f4
-    classDef env     fill:#2e2a1a,stroke:#f9e2af,color:#f9e2af
-    classDef flt     fill:#2a1a2e,stroke:#cba6f7,color:#cba6f7
-    classDef pan     fill:#1a2a2e,stroke:#74c7ec,color:#74c7ec
-    classDef lfo     fill:#2a1a3e,stroke:#cba6f7,color:#cba6f7
-    classDef flanger fill:#2e1a2e,stroke:#cba6f7,color:#cba6f7
-    classDef reverb  fill:#1a2e20,stroke:#a6e3a1,color:#a6e3a1
-    classDef output  fill:#181825,stroke:#a6e3a1,color:#a6e3a1
-    classDef ctrl    fill:#181825,stroke:#45475a,color:#6c7086
-    classDef io      fill:#1e1e2e,stroke:#45475a,color:#cdd6f4
+    classDef osc1      fill:#1e3a5f,stroke:#89b4fa,color:#89b4fa
+    classDef osc2      fill:#1a2e1a,stroke:#a6e3a1,color:#a6e3a1
+    classDef blend     fill:#1e1e2e,stroke:#45475a,color:#cdd6f4
+    classDef env       fill:#2e2a1a,stroke:#f9e2af,color:#f9e2af
+    classDef flt       fill:#2a1a2e,stroke:#cba6f7,color:#cba6f7
+    classDef pan       fill:#1a2a2e,stroke:#74c7ec,color:#74c7ec
+    classDef lfo       fill:#2a1a3e,stroke:#cba6f7,color:#cba6f7
+    classDef flanger   fill:#2e1a2e,stroke:#cba6f7,color:#cba6f7
+    classDef reverb    fill:#1a2e20,stroke:#a6e3a1,color:#a6e3a1
+    classDef blackhole fill:#1a1a3e,stroke:#b4befe,color:#b4befe
+    classDef output    fill:#181825,stroke:#a6e3a1,color:#a6e3a1
+    classDef ctrl      fill:#181825,stroke:#45475a,color:#6c7086
+    classDef io        fill:#1e1e2e,stroke:#45475a,color:#cdd6f4
 
     class OSC1 osc1
     class OSC2 osc2
@@ -84,6 +87,7 @@ flowchart TD
     class LFO,LFO2,ENV_SRC,MOD,SPREAD lfo
     class FLANGER flanger
     class REVERB reverb
+    class BLACKHOLE blackhole
     class OUTL,OUTR,SPK output
     class MIDI,FREQ ctrl
     class ALLOC io
@@ -107,5 +111,6 @@ flowchart TD
 | **Soft Clip** | — | `tanh(sum × 0.3)`; single voice passes almost linear, 8 voices saturate gracefully | `wasm_synth.rs` |
 | **Flanger** | purple | modulated feedback comb filter; 512-sample circular buffer (L + R); `d(n) = CENTER + depth·MAX·sin(2π·rate·n/sr)`; R channel LFO 90° ahead for stereo width; linear tap interpolation; `wet`, `rate` (0.05–8 Hz), `depth` (0–1), `feedback` (0–0.9) | `flanger.rs` |
 | **Reverb** | green | Freeverb: 8 parallel comb filters + 4 series allpass per channel; stereo via 23-sample L/R offset; `wet` (0–1), `room` → feedback [0.70, 0.98], `damp` → LP rolloff [0, 0.40] | `reverb.rs` |
+| **Blackhole** | indigo | Eventide-inspired infinite-space reverb; `FIXED_GAIN = 0.03`; `gravity` = raw comb feedback (0–1, default 0.85; 1.0 = infinite tail); `size` scales delays 1×–4× (default 0 = base Freeverb); 4 modulated Schroeder allpass per channel — LFO phases 0°/90°/180°/270° (L) + 45° (R); `predelay` bypassed at 0 ms | `blackhole.rs` |
 
 For the theory behind each block see [WAVETABLE_THEORY.md](WAVETABLE_THEORY.md).

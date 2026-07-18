@@ -4,6 +4,7 @@ use crate::adsr::Adsr;
 use crate::filter::Filter;
 use crate::reverb::Reverb;
 use crate::flanger::Flanger;
+use crate::blackhole::Blackhole;
 use std::f32::consts::FRAC_PI_4;
 
 const VOICES: usize = 8;
@@ -71,6 +72,7 @@ pub struct Synth {
     spread: f32,         // 0 = mono, 1 = full stereo spread across 8 voices
     reverb: Reverb,
     flanger: Flanger,
+    blackhole: Blackhole,
     last_left: f32,
     last_right: f32,
 }
@@ -131,6 +133,7 @@ impl Synth {
             spread: 0.0,
             reverb: Reverb::new(),
             flanger: Flanger::new(sample_rate),
+            blackhole: Blackhole::new(sample_rate),
             last_left: 0.0,
             last_right: 0.0,
         };
@@ -310,7 +313,8 @@ impl Synth {
         let raw_l = (left  * 0.3).tanh();
         let raw_r = (right * 0.3).tanh();
         let (fl_l, fl_r) = self.flanger.process(raw_l, raw_r);
-        let (out_l, out_r) = self.reverb.process(fl_l, fl_r);
+        let (rv_l, rv_r) = self.reverb.process(fl_l, fl_r);
+        let (out_l, out_r) = self.blackhole.process(rv_l, rv_r);
         self.last_left  = out_l;
         self.last_right = out_r;
     }
@@ -385,6 +389,13 @@ impl Synth {
     pub fn set_flanger_rate(&mut self, hz: f32)    { self.flanger.set_rate(hz, self.sample_rate); }
     pub fn set_flanger_depth(&mut self, v: f32)    { self.flanger.set_depth(v); }
     pub fn set_flanger_feedback(&mut self, v: f32) { self.flanger.set_feedback(v); }
+
+    pub fn set_blackhole_wet(&mut self, v: f32)       { self.blackhole.set_wet(v); }
+    pub fn set_blackhole_gravity(&mut self, v: f32)   { self.blackhole.set_gravity(v); }
+    pub fn set_blackhole_size(&mut self, v: f32)      { self.blackhole.set_size(v); }
+    pub fn set_blackhole_damp(&mut self, v: f32)      { self.blackhole.set_damp(v); }
+    pub fn set_blackhole_mod(&mut self, v: f32)       { self.blackhole.set_mod_depth(v); }
+    pub fn set_blackhole_predelay(&mut self, v: f32)  { self.blackhole.set_predelay(v, self.sample_rate); }
 
     /// Configure one modulation matrix slot.
     ///

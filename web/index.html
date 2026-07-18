@@ -303,6 +303,12 @@
       align-self: stretch;
     }
 
+    .fx-separator {
+      height: 1px;
+      background: #313244;
+      margin: 0.8rem 0;
+    }
+
     .fx-knobs {
       display: flex;
       gap: 1.5rem;
@@ -742,6 +748,44 @@
         </div>
       </div>
     </div>
+    <div class="fx-separator"></div>
+    <div class="fx-row">
+      <div class="fx-section">
+        <span class="fx-label">Blackhole</span>
+        <div class="fx-knobs">
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="bh-wet-knob"></canvas>
+            <span class="knob-label">Wet</span>
+            <span class="knob-val" id="bh-wet-val">0%</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="bh-gravity-knob"></canvas>
+            <span class="knob-label">Gravity</span>
+            <span class="knob-val" id="bh-gravity-val">85%</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="bh-size-knob"></canvas>
+            <span class="knob-label">Size</span>
+            <span class="knob-val" id="bh-size-val">0%</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="bh-damp-knob"></canvas>
+            <span class="knob-label">Damp</span>
+            <span class="knob-val" id="bh-damp-val">50%</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="bh-mod-knob"></canvas>
+            <span class="knob-label">Mod</span>
+            <span class="knob-val" id="bh-mod-val">30%</span>
+          </div>
+          <div class="knob-wrap">
+            <canvas class="knob-canvas" id="bh-pre-knob"></canvas>
+            <span class="knob-label">Predelay</span>
+            <span class="knob-val" id="bh-pre-val">0 ms</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="panel">
@@ -767,7 +811,9 @@
   </div>
 
   <script type="module">
-    import init, { Synth } from './pkg/rust_wavetable.js';
+    // init and Synth are loaded dynamically inside startAudio() so both the
+    // .js wrapper and the .wasm binary are cache-busted together.
+    let init, Synth;
 
     // ── Piano layout (C0–C7, 7 octaves) ────────────────────────────────
     const NOTE_NAMES  = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
@@ -976,7 +1022,9 @@
       let ctx;
       try {
         ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
-        await init('./pkg/rust_wavetable_bg.wasm?' + Date.now());
+        const ts = Date.now();
+        ({ default: init, Synth } = await import('./pkg/rust_wavetable.js?' + ts));
+        await init('./pkg/rust_wavetable_bg.wasm?' + ts);
         synth = new Synth(ctx.sampleRate);
         modState.forEach((_, i) => syncModSlot(i));
 
@@ -1013,6 +1061,10 @@
       const lfo2Wf = document.querySelector('#lfo2-wf .lfo-wf-btn.active');
       if (lfo1Wf) synth.set_lfo_waveform(+lfo1Wf.dataset.idx);
       if (lfo2Wf) synth.set_lfo2_waveform(+lfo2Wf.dataset.idx);
+      synth.set_blackhole_gravity(bhGravityKnob.value);
+      synth.set_blackhole_size(bhSizeKnob.value);
+      synth.set_blackhole_damp(bhDampKnob.value);
+      synth.set_blackhole_mod(bhModKnob.value);
     }
 
     // ── Key interaction ─────────────────────────────────────────────────
@@ -1759,6 +1811,54 @@
       onChange: v => {
         document.getElementById('flanger-fbk-val').textContent = Math.round(v / 0.9 * 100) + '%';
         if (synth) synth.set_flanger_feedback(v);
+      },
+    });
+
+    const bhWetKnob = new Knob(document.getElementById('bh-wet-knob'), {
+      min: 0, max: 1, value: 0, color: '#b4befe',
+      onChange: v => {
+        document.getElementById('bh-wet-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_blackhole_wet(v);
+      },
+    });
+
+    const bhGravityKnob = new Knob(document.getElementById('bh-gravity-knob'), {
+      min: 0, max: 1, value: 0.85, color: '#b4befe',
+      onChange: v => {
+        document.getElementById('bh-gravity-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_blackhole_gravity(v);
+      },
+    });
+
+    const bhSizeKnob = new Knob(document.getElementById('bh-size-knob'), {
+      min: 0, max: 1, value: 0.0, color: '#b4befe',
+      onChange: v => {
+        document.getElementById('bh-size-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_blackhole_size(v);
+      },
+    });
+
+    const bhDampKnob = new Knob(document.getElementById('bh-damp-knob'), {
+      min: 0, max: 1, value: 0.5, color: '#b4befe',
+      onChange: v => {
+        document.getElementById('bh-damp-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_blackhole_damp(v);
+      },
+    });
+
+    const bhModKnob = new Knob(document.getElementById('bh-mod-knob'), {
+      min: 0, max: 1, value: 0.3, color: '#b4befe',
+      onChange: v => {
+        document.getElementById('bh-mod-val').textContent = Math.round(v * 100) + '%';
+        if (synth) synth.set_blackhole_mod(v);
+      },
+    });
+
+    const bhPreKnob = new Knob(document.getElementById('bh-pre-knob'), {
+      min: 0, max: 1, value: 0, color: '#b4befe',
+      onChange: v => {
+        document.getElementById('bh-pre-val').textContent = Math.round(v * 500) + ' ms';
+        if (synth) synth.set_blackhole_predelay(v);
       },
     });
 

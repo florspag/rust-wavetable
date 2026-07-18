@@ -660,6 +660,78 @@ This quarter-period phase offset decorrelates the comb spectra of L and R: when 
 
 ---
 
+## Blackhole
+
+The Blackhole is an **infinite-space reverb** inspired by the Eventide Blackhole pedal. It extends the Freeverb architecture in three ways: a **Size** knob stretches every comb delay from 1× to 4×; **Gravity** is the raw comb feedback coefficient, reaching true infinite sustain at 1.0; and **Mod** drives a sinusoidal LFO on each allpass read pointer, producing the characteristic pitch shimmer.
+
+### Architecture
+
+```text
+input → predelay (0–500 ms) → 8× parallel comb (Size-scaled, LP damp in loop)
+                                        ↓
+                          4× series modulated allpass per channel (LFO shimmer)
+                                        ↓
+                              wet/dry mix → output
+```
+
+### Comb filters and Gravity
+
+Each channel drives 8 parallel feedback comb filters with the same base delay lengths as Freeverb. On each sample:
+
+```text
+read   = buf[(write_pos + N − delay) mod N]
+store  = read × damp2 + store × damp1        ← one-pole LP in loop
+buf[write_pos] = input + store × gravity
+output = read
+```
+
+where `damp1 = damp × 0.5`, `damp2 = 1 − damp1`. **Gravity** is the raw feedback coefficient. At `gravity = 1.0` the comb neither adds nor removes energy: the reverb tail is truly infinite. A mono-summed, gain-scaled input `(L + R) × 0.03` drives all 8 combs; their outputs are summed to form the channel signal.
+
+The **Size** knob applies a uniform scale factor `scale = 1 + size × 3` to every delay length:
+
+```text
+size = 0.0 → scale = 1× → base Freeverb delays  (first echo ≈ 25 ms, fast buildup)
+size = 1.0 → scale = 4× → 4× longer delays      (first echo ≈ 100 ms, large space)
+```
+
+### Modulated allpass and shimmer
+
+After the comb bank, signal passes through 4 series Schroeder allpass filters per channel. For a static delay `D`:
+
+```text
+H(z) = (z^{-D} − g) / (1 − g·z^{-D})        g = 0.5
+```
+
+`|H(e^{jω})| = 1` for all ω — a perfect allpass with no magnitude colouration.
+
+When `D` is swept by a sinusoidal LFO (`mod_offset = mod_depth × 64 × sin(θ)`), the constant-delay assumption is broken and the phase response changes transiently, producing subtle pitch modulation on the reverb tail — the **shimmer** effect.
+
+The four L-channel allpasses use LFO phases **0°, 90°, 180°, 270°**; the four R-channel allpasses are shifted an additional **45°** for stereo decorrelation:
+
+```text
+L: phase_i = lfo_rad + i × π/2          i = 0, 1, 2, 3
+R: phase_i = lfo_rad + i × π/2 + π/4
+```
+
+The LFO runs at **0.35 Hz** — slow enough that the shimmer reads as spatial texture rather than vibrato.
+
+### Predelay
+
+A circular buffer of 22 050 samples (500 ms at 44 100 Hz) delays the input before it enters the reverb network. When `predelay_samples = 0` the buffer is **bypassed entirely**: a zero-sample circular read aliases onto the unwritten write slot, injecting silence into the comb bank rather than the dry input.
+
+### Blackhole parameter mapping
+
+| UI knob | Implementation | Default |
+| ------- | -------------- | ------- |
+| **Wet** (0–1) | wet/dry mix applied after the reverb network | 0 (bypass) |
+| **Gravity** (0–1) | raw comb feedback; 1.0 = infinite tail | 0.85 |
+| **Size** (0–1) | delay scale `1 + size × 3`; 0 = base Freeverb delays (≈ 25 ms first echo) | 0.0 |
+| **Damp** (0–1) | LP coefficient `damp1 = damp × 0.5`; higher = darker tail | 0.5 |
+| **Mod** (0–1) | allpass LFO depth; scales `MOD_DEPTH_MAX = 64` samples | 0.3 |
+| **Pre** (0–1) | predelay 0–500 ms; 0 bypasses the circular buffer entirely | 0.0 |
+
+---
+
 ## Signal Flow
 
 ```text
@@ -703,6 +775,13 @@ Piano key / MIDI  →  note_on(freq)       Frequency slider  →  change_freq(fr
     input = (fl_l + fl_r) × 0.015
     out_L/R ← parallel comb bank → series allpass chain
     output = fl × (1 − wet) + reverb_out × wet
+                        ↓
+  Blackhole reverb (predelay → 8 comb + 4 mod-allpass per channel):
+    if predelay = 0: pass rv_l/rv_r directly; else circular buffer (max 500 ms)
+    input = (pre_l + pre_r) × 0.03  ← FIXED_GAIN (2× Freeverb)
+    gravity = raw feedback (default 0.85); size scales delays 1×–4× (default 1×)
+    L allpass phases: 0°, 90°, 180°, 270°   R: +45° offset → stereo shimmer
+    output = rv × (1 − wet) + blackhole_out × wet
                         ↓
   ScriptProcessorNode (2 channels): get_left() / get_right() → speakers
 ```
